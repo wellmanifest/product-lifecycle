@@ -1,0 +1,24 @@
+# Canonical product lifecycle request v1. The accepted language is the
+# intersection of this grammar and product-lifecycle.schema.json. It cannot emit
+# prices, settlement amounts, marketing copy, credentials, hostnames or
+# deployment commands.
+root ::= request
+request ::= "{\"$schema\":\"https://wellmanifest.dev/schemas/product-lifecycle/v1\",\"schema\":\"wellmanifest.product-lifecycle-request/v1\",\"requestId\":" identifier ",\"operation\":" operation ",\"catalogRef\":" catalog-ref ",\"productRef\":" product-ref ",\"legalPackRef\":" pack-ref ",\"intentRef\":" intent-ref ",\"grantRef\":" grant-ref ",\"planHash\":" sha256 "}"
+operation ::= "\"inspect\"" | "\"register\"" | "\"release\"" | "\"restrict\"" | "\"deprecate\"" | "\"withdraw\"" | "\"sunset\""
+identifier ::= "\"" lower id-tail "\""
+catalog-ref ::= "\"catalog://" authority "/" path "/v" positive-digits "\""
+product-ref ::= "\"product://" authority "/" identifier-body "/v" positive-digits "\""
+pack-ref ::= "\"pack://" authority "/" path "/v" positive-digits "\""
+intent-ref ::= "\"intent://" authority "/" path "\""
+grant-ref ::= "\"grant://" authority "/" path "\""
+sha256 ::= "\"" hex64 "\""
+authority ::= lower authority-tail
+authority-tail ::= ([a-z0-9.-])*
+path ::= path-char (path-char)*
+path-char ::= [A-Za-z0-9._:/-]
+identifier-body ::= lower id-tail
+id-tail ::= ([a-z0-9._:-])*
+positive-digits ::= [1-9] ([0-9])*
+hex64 ::= hex hex hex hex hex hex hex hex hex hex hex hex hex hex hex hex hex hex hex hex hex hex hex hex hex hex hex hex hex hex hex hex hex hex hex hex hex hex hex hex hex hex hex hex hex hex hex hex hex hex hex hex hex hex hex hex hex hex hex hex hex hex hex hex
+hex ::= [a-f0-9]
+lower ::= [a-z]

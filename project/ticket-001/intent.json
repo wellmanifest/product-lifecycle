@@ -19,5 +19,66 @@
   "stacks": ["docker"],
   "dependsOn": [],
   "conflictsWith": [],
-  "integrationTicket": null
+  "integrationTicket": null,
+  "delivery": {
+    "acceptedBaseSha": "a21eba0d2e2c0876ad1d0c28aa26058b73df1e05",
+    "targetBranch": "main",
+    "outcome": "A product and service catalog lifecycle standard with jurisdiction-aware availability and secret-free receipts.",
+    "nonGoals": [
+      "Set prices or settlement",
+      "Process payments",
+      "Define license or jurisdiction semantics",
+      "Deploy products or tenants",
+      "Replace saas-lifecycle commercial state"
+    ],
+    "complexity": "S",
+    "estimatedMinutes": 30,
+    "budgets": {
+      "maxImplementationFiles": 5,
+      "maxAffectedComponents": 2,
+      "maxPublicInterfaceChanges": 0,
+      "maxRuntimeDependencies": 0
+    },
+    "architecture": {
+      "status": "accepted",
+      "decision": "Model products as a versioned catalog whose availability rows and legal-pack refs compose with legal-lifecycle; keep commercial amounts in saas-lifecycle.",
+      "components": [
+        {
+          "name": "normative-contract",
+          "paths": [
+            "standard/product-lifecycle.schema.json",
+            "standard/product-lifecycle.v1.gbnf"
+          ]
+        },
+        {
+          "name": "conformance-and-guidance",
+          "paths": [
+            "standard/conformance.py",
+            "docs/ARCHITECTURE.md",
+            "docs/LOGIC_FLOW.md"
+          ]
+        }
+      ],
+      "responsibilityChanges": false,
+      "interfaceChanges": [],
+      "dataChanges": [
+        "Introduce the experimental wellmanifest.product-lifecycle/v1 document family"
+      ],
+      "ui": {"impact": "none", "states": [], "evidence": []},
+      "rollback": "Remove the five ticket-owned standard files while preserving the governed baseline and ticket evidence."
+    },
+    "runtimeDependencies": [],
+    "validation": [
+      {
+        "criterion": "AC-05",
+        "commands": ["python3 standard/conformance.py --all", "docker compose run --rm conformance"],
+        "evidence": "project/ticket-001/ai-grok-logs.txt"
+      },
+      {
+        "criterion": "AC-06",
+        "commands": ["./project/governance-check.sh --actor agent", "git diff --check"],
+        "evidence": "project/ticket-001/ai-grok-logs.txt"
+      }
+    ]
+  }
 }

@@ -18,17 +18,17 @@ This module stores only opaque pack and license references.
 
 ## Acceptance criteria
 
-- [ ] AC-01: The repository has an immutable published governance adoption and
+- [x] AC-01: The repository has an immutable published governance adoption and
   a real local seed baseline created before implementation.
-- [ ] AC-02: A closed Draft 2020-12 schema defines catalog, request, product
+- [x] AC-02: A closed Draft 2020-12 schema defines catalog, request, product
   state and receipt variants.
-- [ ] AC-03: Request-only GBNF excludes marketing copy, prices, credentials
+- [x] AC-03: Request-only GBNF excludes marketing copy, prices, credentials
   and deployment coordinates.
-- [ ] AC-04: Documentation defines the state machine, composition with legal
+- [x] AC-04: Documentation defines the state machine, composition with legal
   and SaaS lifecycles, and fail-closed availability.
-- [ ] AC-05: Positive and adversarial conformance passes locally and in
+- [x] AC-05: Positive and adversarial conformance passes locally and in
   networkless, read-only Docker.
-- [ ] AC-06: Governance and diff hygiene pass against the exact baseline.
+- [x] AC-06: Governance and diff hygiene pass against the exact baseline.
 
 ## Authorization
 
@@ -45,7 +45,9 @@ release creation.
 
 ## Baseline
 
-To be written after the seed transaction.
+The local seed transaction created
+`a21eba0d2e2c0876ad1d0c28aa26058b73df1e05`. Standard implementation begins
+after this SHA and bounded delivery uses it as the exact accepted base.
 
 ## Participants
 
