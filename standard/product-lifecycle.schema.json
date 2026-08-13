@@ -1,0 +1,123 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://wellmanifest.dev/schemas/product-lifecycle/v1",
+  "title": "Wellmanifest product lifecycle contracts v1",
+  "description": "Closed contracts for versioned product catalogs, lifecycle requests, product state and secret-free receipts. Documents never carry prices, payment data or deployment coordinates.",
+  "oneOf": [
+    {"$ref": "#/$defs/catalog"},
+    {"$ref": "#/$defs/request"},
+    {"$ref": "#/$defs/lifecycle"},
+    {"$ref": "#/$defs/receipt"}
+  ],
+  "$defs": {
+    "identifier": {"type": "string", "minLength": 1, "maxLength": 96, "pattern": "^[a-z][a-z0-9._:-]*$"},
+    "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "productRef": {"type": "string", "pattern": "^product://[a-z0-9.-]+/[a-z][a-z0-9._:-]*/v[1-9][0-9]*$", "maxLength": 240},
+    "catalogRef": {"type": "string", "pattern": "^catalog://[a-z0-9.-]+/[A-Za-z0-9._:/-]+/v[1-9][0-9]*$", "maxLength": 320},
+    "packRef": {"type": "string", "pattern": "^pack://[a-z0-9.-]+/[A-Za-z0-9._:/-]+/v[1-9][0-9]*$", "maxLength": 320},
+    "licenseRef": {"type": "string", "pattern": "^license://[a-z0-9.-]+/[A-Za-z0-9._:/-]+/v[1-9][0-9]*$", "maxLength": 320},
+    "jurisdictionRef": {"type": "string", "pattern": "^jurisdiction://[a-z0-9.-]+/[A-Za-z0-9._:/-]+/v[1-9][0-9]*$", "maxLength": 320},
+    "entitlementRef": {"type": "string", "pattern": "^entitlement://[a-z0-9.-]+/[A-Za-z0-9._:/-]+/v[1-9][0-9]*$", "maxLength": 320},
+    "intentRef": {"type": "string", "pattern": "^intent://[a-z0-9.-]+/[A-Za-z0-9._:/-]+$", "maxLength": 320},
+    "grantRef": {"type": "string", "pattern": "^grant://[a-z0-9.-]+/[A-Za-z0-9._:/-]+$", "maxLength": 320},
+    "evidenceRef": {"type": "string", "pattern": "^evidence://[a-z0-9.-]+/[A-Za-z0-9._:/-]+/r[1-9][0-9]*$", "maxLength": 320},
+    "availabilityStatus": {"enum": ["offered", "restricted", "prohibited"]},
+    "stage": {"enum": ["draft", "preview", "generally-available", "restricted", "deprecated", "withdrawn", "sunset"]},
+    "availability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["jurisdictionRef", "status"],
+      "properties": {
+        "jurisdictionRef": {"$ref": "#/$defs/jurisdictionRef"},
+        "status": {"$ref": "#/$defs/availabilityStatus"}
+      }
+    },
+    "product": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ref", "name", "kind", "stage", "licenseRef", "legalPackRef", "availability", "entitlements", "public"],
+      "properties": {
+        "ref": {"$ref": "#/$defs/productRef"},
+        "name": {"type": "string", "minLength": 1, "maxLength": 120},
+        "kind": {"enum": ["software", "saas", "service", "hardware", "content", "mixed"]},
+        "stage": {"$ref": "#/$defs/stage"},
+        "licenseRef": {"$ref": "#/$defs/licenseRef"},
+        "legalPackRef": {"$ref": "#/$defs/packRef"},
+        "availability": {"type": "array", "minItems": 1, "maxItems": 64, "items": {"$ref": "#/$defs/availability"}},
+        "entitlements": {"type": "array", "minItems": 1, "maxItems": 64, "uniqueItems": true, "items": {"$ref": "#/$defs/entitlementRef"}},
+        "successorProductRef": {"$ref": "#/$defs/productRef"},
+        "public": {"type": "boolean"}
+      }
+    },
+    "catalog": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["$schema", "schema", "catalogId", "version", "products", "defaultLegalPackRef"],
+      "properties": {
+        "$schema": {"const": "https://wellmanifest.dev/schemas/product-lifecycle/v1"},
+        "schema": {"const": "wellmanifest.product-catalog/v1"},
+        "catalogId": {"$ref": "#/$defs/identifier"},
+        "version": {"type": "string", "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z.-]+)?$"},
+        "products": {"type": "array", "minItems": 1, "maxItems": 64, "items": {"$ref": "#/$defs/product"}},
+        "defaultLegalPackRef": {"$ref": "#/$defs/packRef"}
+      }
+    },
+    "request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["$schema", "schema", "requestId", "operation", "catalogRef", "productRef", "legalPackRef", "intentRef", "grantRef", "planHash"],
+      "properties": {
+        "$schema": {"const": "https://wellmanifest.dev/schemas/product-lifecycle/v1"},
+        "schema": {"const": "wellmanifest.product-lifecycle-request/v1"},
+        "requestId": {"$ref": "#/$defs/identifier"},
+        "operation": {"enum": ["inspect", "register", "release", "restrict", "deprecate", "withdraw", "sunset"]},
+        "catalogRef": {"$ref": "#/$defs/catalogRef"},
+        "productRef": {"$ref": "#/$defs/productRef"},
+        "legalPackRef": {"$ref": "#/$defs/packRef"},
+        "intentRef": {"$ref": "#/$defs/intentRef"},
+        "grantRef": {"$ref": "#/$defs/grantRef"},
+        "planHash": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "lifecycle": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["$schema", "schema", "catalogRef", "productRef", "stage", "version", "updatedAt", "availability"],
+      "properties": {
+        "$schema": {"const": "https://wellmanifest.dev/schemas/product-lifecycle/v1"},
+        "schema": {"const": "wellmanifest.product-lifecycle-state/v1"},
+        "catalogRef": {"$ref": "#/$defs/catalogRef"},
+        "productRef": {"$ref": "#/$defs/productRef"},
+        "stage": {"$ref": "#/$defs/stage"},
+        "version": {"type": "integer", "minimum": 1},
+        "updatedAt": {"type": "string", "format": "date-time"},
+        "availability": {"type": "array", "minItems": 1, "maxItems": 64, "items": {"$ref": "#/$defs/availability"}},
+        "successorProductRef": {"$ref": "#/$defs/productRef"},
+        "sunsetAt": {"type": "string", "format": "date"}
+      },
+      "allOf": [
+        {"if": {"properties": {"stage": {"const": "sunset"}}, "required": ["stage"]}, "then": {"required": ["sunsetAt"]}}
+      ]
+    },
+    "receipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["$schema", "schema", "requestId", "catalogRef", "productRef", "inputHash", "planHash", "outcome", "startedAt", "completedAt", "evidenceRefs", "secretsRedacted", "commercialDataStored"],
+      "properties": {
+        "$schema": {"const": "https://wellmanifest.dev/schemas/product-lifecycle/v1"},
+        "schema": {"const": "wellmanifest.product-lifecycle-receipt/v1"},
+        "requestId": {"$ref": "#/$defs/identifier"},
+        "catalogRef": {"$ref": "#/$defs/catalogRef"},
+        "productRef": {"$ref": "#/$defs/productRef"},
+        "inputHash": {"$ref": "#/$defs/sha256"},
+        "planHash": {"$ref": "#/$defs/sha256"},
+        "outcome": {"enum": ["denied", "registered", "released", "restricted", "deprecated", "withdrawn", "sunset", "failed"]},
+        "startedAt": {"type": "string", "format": "date-time"},
+        "completedAt": {"type": "string", "format": "date-time"},
+        "evidenceRefs": {"type": "array", "minItems": 1, "maxItems": 64, "uniqueItems": true, "items": {"$ref": "#/$defs/evidenceRef"}},
+        "secretsRedacted": {"const": true},
+        "commercialDataStored": {"const": false}
+      }
+    }
+  }
+}

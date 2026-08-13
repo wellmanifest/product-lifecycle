@@ -30,6 +30,9 @@ authority.
   from the request to create and publish this repository.
 - Adopted published `wellmanifest/new-project` v0.16.0 at
   `6800f0138bc9063eb2dacb0a8b797dedcafb7952`.
+- Created seed baseline `a21eba0d2e2c0876ad1d0c28aa26058b73df1e05`.
+- Added catalog/request/state/receipt contracts, GBNF, conformance and
+  composition docs.
 
 ## Blockers
 
