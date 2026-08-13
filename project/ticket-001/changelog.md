@@ -5,3 +5,5 @@
 - Added closed catalog, request, product-state and receipt contracts.
 - Added request-only GBNF and dependency-free conformance.
 - Documented composition with legal-lifecycle and saas-lifecycle.
+- Closed after merge of pull request #1 at
+  `92bb5d8dd09212948d680493dd63117cde86db34`.

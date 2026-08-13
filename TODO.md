@@ -3,5 +3,5 @@
 - [x] [ticket-001](project/ticket-001/README.md) — establish the governed local
   seed baseline and define the standalone v1 contract.
 - [x] Define and validate the standalone v1 product lifecycle contract.
-- [ ] Obtain trusted exact-head review and merge through the authorized pull
-  request lifecycle.
+- [x] Obtain trusted exact-head review and merge through the authorized pull
+  request lifecycle. Merged as `92bb5d8dd09212948d680493dd63117cde86db34`.
