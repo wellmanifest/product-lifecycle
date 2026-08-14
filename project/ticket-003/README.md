@@ -15,7 +15,7 @@ adding runtime dependencies or changing lifecycle semantics.
 
 ## Acceptance criteria
 
-- [ ] AC-01: GitHub Actions runs `python3 standard/conformance.py --all` on
+- [x] AC-01: GitHub Actions runs `python3 standard/conformance.py --all` on
   pull requests, pushes to `main`, and manual dispatches.
 - [x] AC-02: The job is named `standards / lifecycle conformance` and uses
   commit-pinned checkout/setup actions with Python 3.12.
