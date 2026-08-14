@@ -1,0 +1,53 @@
+{
+  "schema": "new-project.intent/v3",
+  "ticket": "ticket-003",
+  "summary": "Require Lifecycle DSL conformance in CI",
+  "workstream": "infrastructure",
+  "classification": {
+    "kind": "FEATURE",
+    "priority": "P1",
+    "origin": "requested"
+  },
+  "delivery": {
+    "acceptedBaseSha": "d804b7409c756f8dc2e4973a87cc661cc317c85f",
+    "targetBranch": "main",
+    "outcome": "Lifecycle DSL conformance is a required visible CI signal on pull requests and integrated main revisions.",
+    "nonGoals": [
+      "Change the product release lifecycle graph or domain semantics",
+      "Fetch the shared validator at runtime",
+      "Add runtime dependencies or write permissions",
+      "Merge without independent trusted current-head approval"
+    ],
+    "complexity": "XS",
+    "estimatedMinutes": 10,
+    "budgets": {"maxImplementationFiles": 1, "maxAffectedComponents": 1, "maxPublicInterfaceChanges": 0, "maxRuntimeDependencies": 0},
+    "architecture": {
+      "status": "accepted",
+      "decision": "Add one read-only GitHub Actions workflow that executes the repository-owned offline conformance gate on PR and main revisions.",
+      "components": [{"name": "lifecycle-conformance-ci", "paths": [".github/workflows/lifecycle-conformance.yml"]}],
+      "responsibilityChanges": false,
+      "interfaceChanges": [],
+      "dataChanges": [],
+      "ui": {"impact": "none", "states": [], "evidence": []},
+      "rollback": "Revert the dedicated conformance workflow; the offline project gate remains available."
+    },
+    "runtimeDependencies": [],
+    "validation": [
+      {"criterion": "AC-01", "commands": ["GitHub Actions exact-head check"], "evidence": "project/ticket-003/ai-codex-logs.txt"},
+      {"criterion": "AC-02", "commands": ["inspect .github/workflows/lifecycle-conformance.yml"], "evidence": "project/ticket-003/ai-codex-logs.txt"},
+      {"criterion": "AC-03", "commands": ["python3 standard/conformance.py --all", "./project/governance-check.sh"], "evidence": "project/ticket-003/ai-codex-logs.txt"},
+      {"criterion": "AC-04", "commands": ["git diff --check"], "evidence": "project/ticket-003/ai-codex-logs.txt"}
+    ]
+  },
+  "allowedPaths": [
+    "project/ticket-003/**",
+    "TODO.md",
+    "project/TICKETS.md",
+    ".github/workflows/lifecycle-conformance.yml"
+  ],
+  "forbiddenPaths": ["project/ticket-*/user-*.md"],
+  "stacks": [],
+  "dependsOn": [],
+  "conflictsWith": [],
+  "integrationTicket": null
+}
