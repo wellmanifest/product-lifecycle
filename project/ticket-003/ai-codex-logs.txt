@@ -6,3 +6,5 @@
 - Docker build and --network none conformance run passed.
 - PR #4 exact-head checks passed: governance / remote lifecycle and
   standards / lifecycle conformance.
+- Integrated main commit caf9527288f7cf5cb4b1fe07660490af56c9fdad
+  was verified before closure.
