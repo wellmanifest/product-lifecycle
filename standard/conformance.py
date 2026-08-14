@@ -12,12 +12,19 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
+import lifecycle
+
 
 ROOT = Path(__file__).resolve().parent
 SCHEMA_PATH = ROOT / "product-lifecycle.schema.json"
 GRAMMAR_PATH = ROOT / "product-lifecycle.v1.gbnf"
+LIFECYCLE_PATH = ROOT / "product-lifecycle.lifecycle"
+LIFECYCLE_VALIDATOR_PATH = ROOT / "lifecycle.py"
 SCHEMA_DIGEST = "d80ab5ddb5e3393f83261c29f53ad4e60be4855f3d5d8f6d1d1dd6dd5f8b87c6"
 GRAMMAR_DIGEST = "f54372cd1e613b3d120a577987937fc7e3cc7dd795a246ecffad155d16e32f56"
+LIFECYCLE_SOURCE_REVISION = "4b5e131a670afb46ca87291479fed7c0fefcf370"
+LIFECYCLE_VALIDATOR_DIGEST = "9c3f3076b5b45408d3eefc34cd567b58821aa565d3fe3bf6339641111079ede0"
+LIFECYCLE_PROFILE_DIGEST = "7b95f50fac0ce58c957e83159d4f86693ac366b9c52d9e0c3b8240ec3ae61bde"
 SCHEMA_URI = "https://wellmanifest.dev/schemas/product-lifecycle/v1"
 SENSITIVE = re.compile(
     r"(?:password|passwd|token|secret|cookie|api[-_]?key|card|cvv|private[-_]?key|"
@@ -26,6 +33,19 @@ SENSITIVE = re.compile(
 )
 SAFE_ASSERTIONS = {"secretsRedacted", "commercialDataStored"}
 STAGES = {"draft", "preview", "generally-available", "restricted", "deprecated", "withdrawn", "sunset"}
+LIFECYCLE_TRANSITIONS = {
+    ("DRAFT", "PREVIEW", "REGISTER"),
+    ("DRAFT", "GENERALLY_AVAILABLE", "RELEASE"),
+    ("PREVIEW", "GENERALLY_AVAILABLE", "RELEASE"),
+    ("GENERALLY_AVAILABLE", "RESTRICTED", "RESTRICT"),
+    ("GENERALLY_AVAILABLE", "DEPRECATED", "DEPRECATE"),
+    ("GENERALLY_AVAILABLE", "WITHDRAWN", "WITHDRAW"),
+    ("RESTRICTED", "DEPRECATED", "DEPRECATE"),
+    ("RESTRICTED", "WITHDRAWN", "WITHDRAW"),
+    ("DEPRECATED", "WITHDRAWN", "WITHDRAW"),
+    ("WITHDRAWN", "SUNSET", "SUNSET"),
+    ("DEPRECATED", "SUNSET", "SUNSET"),
+}
 
 
 class ContractError(ValueError):
@@ -38,6 +58,38 @@ def canonical(value: Any) -> str:
 
 def digest(value: str) -> str:
     return hashlib.sha256(value.encode()).hexdigest()
+
+
+def file_digest(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def lifecycle_name(value: str) -> str:
+    return value.upper().replace("-", "_")
+
+
+def validate_lifecycle_profile(schema: dict[str, Any]) -> None:
+    if file_digest(LIFECYCLE_VALIDATOR_PATH) != LIFECYCLE_VALIDATOR_DIGEST:
+        raise ContractError("pinned lifecycle validator digest mismatch")
+    if file_digest(LIFECYCLE_PATH) != LIFECYCLE_PROFILE_DIGEST:
+        raise ContractError("pinned lifecycle profile digest mismatch")
+    report = lifecycle.validate_path(LIFECYCLE_PATH, lifecycle.embedded_catalog())
+    if not report.valid or len(report.lifecycles) != 1:
+        raise ContractError("Lifecycle DSL profile is invalid")
+    model = report.lifecycles[0]
+    state_values = schema["$defs"]["stage"]["enum"]
+    expected_states = {lifecycle_name(str(value)) for value in state_values}
+    actual_transitions = {
+        (item.source, item.target, item.event) for item in model.transitions
+    }
+    if model.name != "product-release" or set(model.states) != expected_states:
+        raise ContractError("Lifecycle DSL state graph mismatch")
+    if actual_transitions != LIFECYCLE_TRANSITIONS:
+        raise ContractError("Lifecycle DSL transition graph mismatch")
+    if model.summary()["initial_state"] != "DRAFT":
+        raise ContractError("Lifecycle DSL initial state mismatch")
+    if model.summary()["terminal_states"] != ["SUNSET"]:
+        raise ContractError("Lifecycle DSL terminal state mismatch")
 
 
 def exact(value: Any, required: set[str], optional: set[str] | None = None) -> dict[str, Any]:
@@ -368,6 +420,7 @@ def validate_receipt(c: Contracts, value: Any) -> None:
 def run_all() -> dict[str, Any]:
     c = Contracts()
     c.integrity()
+    validate_lifecycle_profile(c.schema)
     catalog, request, state, receipt = catalog_example(), request_example(), lifecycle_example(), receipt_example()
     validate_catalog(c, catalog)
     validate_request(c, request)

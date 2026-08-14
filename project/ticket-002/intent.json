@@ -28,7 +28,7 @@
     },
     "architecture": {
       "status": "accepted",
-      "decision": "Vendor the dependency-free validator from lifecycle revision 3484b829a97044d0995fdedc6ab14fbeaff998d3, pin its bytes, and make existing conformance compare the local DSL graph exactly with the domain graph.",
+      "decision": "Vendor the dependency-free validator from lifecycle revision 4b5e131a670afb46ca87291479fed7c0fefcf370, pin its bytes, and make existing conformance compare the local DSL graph exactly with the domain graph.",
       "components": [
         {
           "name": "domain-conformance",

@@ -25,6 +25,13 @@ projection and a portable fail-closed gate; it does not replace those rules.
 
 - Initialized the bounded ticket and recorded SESSION_EXECUTION_AUTHORIZATION
   from the request to execute this work.
+- Added the exact product release graph as a local Lifecycle DSL v1 profile.
+- Vendored the dependency-free validator byte-for-byte from the pinned shared
+  lifecycle revision and bound both files by SHA-256.
+- Extended existing conformance with fail-closed DSL, state-boundary and exact
+  transition-set checks without changing domain payload or authority rules.
+- Proved that validator drift, profile drift and valid-but-wrong graph drift
+  are all rejected before the original domain suite runs.
 
 ## Blockers
 
