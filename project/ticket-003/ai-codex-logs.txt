@@ -1,0 +1,8 @@
+2026-08-14 VALIDATION
+- Ruby YAML parser accepted .github/workflows/lifecycle-conformance.yml.
+- python3 standard/conformance.py --all passed.
+- git diff --check and git diff --cached --check passed.
+- ./project/governance-check.sh passed with 0 errors and 0 warnings.
+- Docker build and --network none conformance run passed.
+- PR #4 exact-head checks passed: governance / remote lifecycle and
+  standards / lifecycle conformance.

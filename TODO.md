@@ -1,5 +1,8 @@
 # Roadmap
 
+- [ ] [ticket-003](project/ticket-003/README.md) — require the shared Lifecycle
+  DSL domain-conformance gate on pull requests and integrated `main` revisions.
+
 - [x] [ticket-002](project/ticket-002/README.md) — adopt the byte-pinned
   shared Lifecycle DSL validator and enforce exact product release graph equality.
 
