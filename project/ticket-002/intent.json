@@ -1,0 +1,90 @@
+{
+  "schema": "new-project.intent/v3",
+  "ticket": "ticket-002",
+  "summary": "Adopt shared Lifecycle DSL profile",
+  "workstream": "integration",
+  "classification": {
+    "kind": "FEATURE",
+    "priority": "P1",
+    "origin": "requested"
+  },
+  "delivery": {
+    "acceptedBaseSha": "a79e490998b63914ab65f46dd45e417cd0335afe",
+    "targetBranch": "main",
+    "outcome": "The product release contract enforces its exact shared Lifecycle DSL projection offline.",
+    "nonGoals": [
+      "Change domain payloads, transitions, effects or authorization",
+      "Add a lifecycle executor, network fetch or runtime dependency",
+      "Modify the shared Lifecycle DSL source in this ticket",
+      "Merge without independent trusted current-head approval"
+    ],
+    "complexity": "S",
+    "estimatedMinutes": 20,
+    "budgets": {
+      "maxImplementationFiles": 3,
+      "maxAffectedComponents": 1,
+      "maxPublicInterfaceChanges": 0,
+      "maxRuntimeDependencies": 0
+    },
+    "architecture": {
+      "status": "accepted",
+      "decision": "Vendor the dependency-free validator from lifecycle revision 3484b829a97044d0995fdedc6ab14fbeaff998d3, pin its bytes, and make existing conformance compare the local DSL graph exactly with the domain graph.",
+      "components": [
+        {
+          "name": "domain-conformance",
+          "paths": [
+            "standard/conformance.py",
+            "standard/lifecycle.py",
+            "standard/product-lifecycle.lifecycle"
+          ]
+        }
+      ],
+      "responsibilityChanges": false,
+      "interfaceChanges": [],
+      "dataChanges": [],
+      "ui": {"impact": "none", "states": [], "evidence": []},
+      "rollback": "Revert the profile, pinned validator and conformance binding together."
+    },
+    "runtimeDependencies": [],
+    "validation": [
+      {
+        "criterion": "AC-01",
+        "commands": ["python3 standard/conformance.py --all"],
+        "evidence": "project/ticket-002/ai-codex-logs.txt"
+      },
+      {
+        "criterion": "AC-02",
+        "commands": ["python3 standard/conformance.py --all"],
+        "evidence": "project/ticket-002/ai-codex-logs.txt"
+      },
+      {
+        "criterion": "AC-03",
+        "commands": ["python3 standard/conformance.py --all"],
+        "evidence": "project/ticket-002/ai-codex-logs.txt"
+      },
+      {
+        "criterion": "AC-04",
+        "commands": ["docker build -t product-lifecycle-ticket-002 .", "docker run --rm --network none product-lifecycle-ticket-002"],
+        "evidence": "project/ticket-002/ai-codex-logs.txt"
+      },
+      {
+        "criterion": "AC-05",
+        "commands": ["./project/governance-check.sh", "git diff --check"],
+        "evidence": "project/ticket-002/ai-codex-logs.txt"
+      }
+    ]
+  },
+  "allowedPaths": [
+    "project/ticket-002/**",
+    "TODO.md",
+    "project/TICKETS.md",
+    "standard/conformance.py",
+    "standard/lifecycle.py",
+    "standard/product-lifecycle.lifecycle"
+  ],
+  "forbiddenPaths": ["project/ticket-*/user-*.md"],
+  "stacks": [],
+  "dependsOn": [],
+  "conflictsWith": [],
+  "integrationTicket": null
+}
