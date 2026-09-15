@@ -1,0 +1,140 @@
+{
+  "schema": "new-project.intent/v3",
+  "ticket": "ticket-004",
+  "summary": "Adopt wellmanifest/new-project v0.20.32 and host source links",
+  "workstream": "governance",
+  "classification": {
+    "kind": "SERVICE",
+    "priority": "P1",
+    "origin": "requested"
+  },
+  "allowedPaths": [
+    "project/ticket-004/**",
+    "TODO.md",
+    "project/TICKETS.md",
+    ".aider.conf.yml",
+    ".cursor/rules/new-project-standard.mdc",
+    ".githooks/pre-commit",
+    ".github/copilot-instructions.md",
+    ".github/workflows/new-project-governance.yml",
+    ".gitignore",
+    ".governance/**",
+    ".subactor/.gitignore",
+    ".subactor/manifest.json",
+    "AGENTS.md",
+    "CLAUDE.md",
+    "GEMINI.md",
+    "project/governance-check.bat",
+    "project/governance-check.sh",
+    "project/new-ticket.sh",
+    "project/readme.sh",
+    "scripts/install-agent-hosts.sh",
+    "scripts/runtime.sh",
+    "wellmanifest_governance.py",
+    "worktree-guard.yaml"
+  ],
+  "forbiddenPaths": ["project/ticket-*/user-*.md"],
+  "stacks": [],
+  "dependsOn": [],
+  "conflictsWith": [],
+  "integrationTicket": null,
+  "delivery": {
+    "acceptedBaseSha": "36dfb51c63308a63946bd50d67e93c6d1870c325",
+    "targetBranch": "main",
+    "outcome": "Adopt the published wellmanifest/new-project v0.20.32 package atomically so all host instructions link to concrete local and remote standard sources and the bounded-session contract is executable.",
+    "nonGoals": [
+      "Change product lifecycle schemas or domain semantics",
+      "Modify human-owned participant files or unrelated workflows",
+      "Rewrite dirty or duplicate adopters outside this ticket",
+      "Bypass protected PR, trusted review or exact-head merge boundary"
+    ],
+    "complexity": "S",
+    "estimatedMinutes": 30,
+    "budgets": {
+      "maxImplementationFiles": 5,
+      "maxAffectedComponents": 2,
+      "maxPublicInterfaceChanges": 1,
+      "maxRuntimeDependencies": 0
+    },
+    "architecture": {
+      "status": "accepted",
+      "decision": "Use Goal's provenance-bound standard adoption transaction from the existing 0.16.0 lock to the published 0.20.32 revision; managed payloads are verified by exact package and lock digests while target-owned files remain governed.",
+      "components": [
+        {
+          "name": "managed-adoption",
+          "paths": [
+            ".governance/**",
+            "AGENTS.md",
+            "CLAUDE.md",
+            "GEMINI.md",
+            ".cursor/**",
+            ".aider.conf.yml",
+            ".githooks/**",
+            ".subactor/**"
+          ]
+        },
+        {
+          "name": "delivery-bindings",
+          "paths": [
+            ".github/copilot-instructions.md",
+            ".github/workflows/new-project-governance.yml",
+            ".gitignore",
+            "project/governance-check.bat",
+            "project/governance-check.sh",
+            "project/new-ticket.sh",
+            "project/readme.sh",
+            "scripts/install-agent-hosts.sh",
+            "scripts/runtime.sh",
+            "wellmanifest_governance.py",
+            "worktree-guard.yaml"
+          ]
+        }
+      ],
+      "responsibilityChanges": false,
+      "interfaceChanges": [
+        "Adopter pins the published 0.20.32 host and governance contract."
+      ],
+      "dataChanges": [],
+      "ui": {"impact": "none", "states": [], "evidence": []},
+      "rollback": "Revert the protected adoption PR to the previous 0.16.0 lock after preserving the exact adoption receipt."
+    },
+    "runtimeDependencies": [],
+    "validation": [
+      {
+        "criterion": "AC-02",
+        "commands": [
+          "goal governance adopt --standard-repository wellmanifest/new-project --source-revision b6ba9c21a65a6a5648ecf904b64c3b75295e136f --target-root . --check",
+          "goal governance adopt --standard-repository wellmanifest/new-project --source-revision b6ba9c21a65a6a5648ecf904b64c3b75295e136f --target-root . --upgrade"
+        ],
+        "evidence": "project/ticket-004/ai-codex-logs.txt"
+      },
+      {
+        "criterion": "AC-03",
+        "commands": [
+          "python3 .governance/agent_host_check.py --root . --actor ci --format json",
+          "grep -Fq 'wellmanifest:source-links:v1' AGENTS.md"
+        ],
+        "evidence": "project/ticket-004/ai-codex-logs.txt"
+      },
+      {
+        "criterion": "AC-04",
+        "commands": [
+          "./project/governance-check.sh --actor agent --base origin/main",
+          "python3 standard/conformance.py --all",
+          "git diff --check"
+        ],
+        "evidence": "project/ticket-004/ai-codex-logs.txt"
+      },
+      {
+        "criterion": "AC-05",
+        "commands": ["protected exact-head PR review and merge receipt"],
+        "evidence": "external protected publication receipt"
+      }
+    ],
+    "standardAdoption": {
+      "sourceRepository": "wellmanifest/new-project",
+      "fromRevision": "6800f0138bc9063eb2dacb0a8b797dedcafb7952",
+      "toRevision": "b6ba9c21a65a6a5648ecf904b64c3b75295e136f"
+    }
+  }
+}

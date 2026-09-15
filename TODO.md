@@ -1,5 +1,9 @@
 # Roadmap
 
+- [ ] [ticket-004](project/ticket-004/README.md) — adopt published
+  `wellmanifest/new-project` v0.20.32 and concrete host source links. Status:
+  `IN_PROGRESS / EDIT`; workstream: `governance`.
+
 - [x] [ticket-003](project/ticket-003/README.md) — require the shared Lifecycle
   DSL domain-conformance gate on pull requests and integrated `main` revisions.
 
