@@ -1,17 +1,19 @@
 #!/usr/bin/env python3
-"""Audit a workspace root for temporary worktrees and duplicate repository clones."""
+"""Audit a workspace root for temporary checkouts and orphan local branches."""
 
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
+import os
 import re
 import subprocess
+import sys
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
-
 
 REPORT_SCHEMA = "new-project.workspace-lifecycle-report/v1"
 MAX_REPOSITORIES = 10_000
@@ -38,6 +40,12 @@ class TicketClaim:
 
 
 @dataclass(frozen=True)
+class LocalBranch:
+    name: str
+    head: str
+
+
+@dataclass(frozen=True)
 class Checkout:
     path: Path
     common_git_dir: Path
@@ -50,6 +58,33 @@ class Checkout:
 
 class AuditError(RuntimeError):
     """The local workspace could not be audited safely."""
+
+
+def load_worktrees_contract():
+    """Load the pinned owner inventory without creating bytecode in the checkout."""
+    script = Path(__file__).resolve()
+    candidates = (
+        script.with_name("worktree_path_check.py"),
+        script.parent.parent / "subprojects" / "worktrees" / "conformance.py",
+    )
+    source = next((candidate for candidate in candidates if candidate.is_file()), None)
+    if source is None:
+        raise AuditError("the managed Worktrees conformance module is missing")
+    spec = importlib.util.spec_from_file_location("workspace_worktrees_contract", source)
+    if spec is None or spec.loader is None:
+        raise AuditError(f"cannot load Worktrees conformance from {source}")
+    module = importlib.util.module_from_spec(spec)
+    previous = sys.dont_write_bytecode
+    sys.dont_write_bytecode = True
+    try:
+        sys.modules[spec.name] = module
+        spec.loader.exec_module(module)
+    except (ImportError, OSError, ValueError) as error:
+        raise AuditError(f"cannot load Worktrees conformance: {error}") from error
+    finally:
+        sys.dont_write_bytecode = previous
+        sys.modules.pop(spec.name, None)
+    return module
 
 
 def run_git(root: Path, *arguments: str) -> str:
@@ -290,6 +325,49 @@ def registered_worktrees(path: Path) -> list[Path]:
     return worktrees
 
 
+def local_branches(path: Path) -> tuple[LocalBranch, ...]:
+    branches: list[LocalBranch] = []
+    output = run_git(
+        path,
+        "for-each-ref",
+        "--format=%(refname:short)\t%(objectname)",
+        "refs/heads",
+    )
+    for line in output.splitlines():
+        name, separator, head = line.partition("\t")
+        if not separator or not name or not head:
+            raise AuditError(f"local branch inventory is malformed for {path}")
+        branches.append(LocalBranch(name=name, head=head))
+    return tuple(sorted(branches, key=lambda item: item.name))
+
+
+def default_branch(path: Path, branches: tuple[LocalBranch, ...]) -> str | None:
+    if not branches:
+        return None
+    try:
+        remote_head = run_git(
+            path,
+            "symbolic-ref",
+            "--quiet",
+            "--short",
+            "refs/remotes/origin/HEAD",
+        )
+    except AuditError:
+        remote_head = ""
+    if remote_head.startswith("origin/"):
+        return remote_head.removeprefix("origin/")
+
+    names = {branch.name for branch in branches}
+    for conventional in ("main", "master"):
+        if conventional in names:
+            return conventional
+    if len(branches) == 1:
+        return branches[0].name
+    raise AuditError(
+        f"default branch cannot be resolved without origin/HEAD for {path}"
+    )
+
+
 def choose_primary(checkouts: list[Checkout]) -> Checkout:
     slug = checkouts[0].identity.rsplit("/", 1)[-1]
     named = [checkout for checkout in checkouts if checkout.path.name.lower() == slug]
@@ -306,7 +384,120 @@ def choose_primary(checkouts: list[Checkout]) -> Checkout:
     )
 
 
-def evaluate(workspace_root: Path, allowed: set[Path]) -> list[Finding]:
+def workspace_inventory(checkouts: list[Checkout]) -> dict[str, Any]:
+    """Compose owner layout classes with adopter-owned duplicate-clone evidence."""
+    contract = load_worktrees_contract()
+    path_style = "windows" if os.name == "nt" else "posix"
+    clone_groups: dict[Path, list[Checkout]] = {}
+    identity_groups: dict[str, list[Checkout]] = {}
+    for checkout in checkouts:
+        clone_groups.setdefault(checkout.common_git_dir, []).append(checkout)
+        identity_groups.setdefault(checkout.identity, []).append(checkout)
+
+    layout_entries: dict[Path, dict[str, Any]] = {}
+    for _, group in sorted(clone_groups.items(), key=lambda item: str(item[0])):
+        primary = choose_primary(group)
+        try:
+            observed = contract.inventory(
+                repository=primary.identity,
+                repository_name=primary.path.name,
+                primary_checkout=str(primary.path),
+                registered=[
+                    {
+                        "path": str(checkout.path),
+                        "head": checkout.head,
+                        "branch": checkout.branch,
+                        "detached": checkout.branch is None,
+                    }
+                    for checkout in group
+                ],
+                path_style=path_style,
+            )
+        except (TypeError, ValueError) as error:
+            raise AuditError(f"Worktrees inventory failed: {error}") from error
+        if observed.get("readOnly") is not True:
+            raise AuditError("Worktrees inventory did not declare readOnly=true")
+        for entry in observed["entries"]:
+            layout_entries[Path(entry["path"])] = entry
+
+    authoritative_clone: dict[str, Path] = {
+        identity: choose_primary(group).common_git_dir
+        for identity, group in identity_groups.items()
+    }
+    entries: list[dict[str, Any]] = []
+    for checkout in sorted(checkouts, key=lambda item: str(item.path)):
+        layout = layout_entries.get(checkout.path)
+        if layout is None:
+            raise AuditError(f"Worktrees inventory omitted {checkout.path}")
+        duplicate = checkout.common_git_dir != authoritative_clone[checkout.identity]
+        anomalies = list(layout["anomalies"])
+        if duplicate:
+            anomalies.append("duplicate-clone")
+        entries.append({
+            "path": str(checkout.path),
+            "identity": checkout.identity,
+            "branch": checkout.branch,
+            "head": checkout.head,
+            "dirty": checkout.dirty,
+            "classification": layout["classification"],
+            "layoutVersion": layout["layoutVersion"],
+            "ticket": layout["ticket"],
+            "slug": layout["slug"],
+            "cloneClassification": "duplicate-clone" if duplicate else "registered",
+            "anomalies": sorted(set(anomalies)),
+        })
+    return {"schema": contract.SCHEMA, "readOnly": True, "entries": entries}
+
+
+def local_branch_findings(
+    checkouts: list[Checkout], allowed: set[Path]
+) -> list[Finding]:
+    findings: list[Finding] = []
+    clone_groups: dict[Path, list[Checkout]] = {}
+    for checkout in checkouts:
+        clone_groups.setdefault(checkout.common_git_dir, []).append(checkout)
+
+    for _, group in sorted(clone_groups.items(), key=lambda item: str(item[0])):
+        primary = choose_primary(group)
+        branches = local_branches(primary.path)
+        default = default_branch(primary.path, branches)
+        checkout_by_branch = {
+            checkout.branch: checkout
+            for checkout in group
+            if checkout.branch is not None
+        }
+        for branch in branches:
+            if branch.name == default:
+                continue
+            active_checkout = checkout_by_branch.get(branch.name)
+            if active_checkout is not None and active_checkout.path in allowed:
+                continue
+            findings.append(Finding(
+                code="GOV-WORKSPACE-LIFECYCLE-004",
+                severity="error",
+                message="A terminal workspace still contains a non-default local branch.",
+                remediation=(
+                    "Classify the branch HEAD and preserve unique history. After releasing "
+                    "its worktree, delete only this exact disposable local ref; never let "
+                    "the checker delete it automatically."
+                ),
+                evidence={
+                    "branch": branch.name,
+                    "checkout": (
+                        str(active_checkout.path)
+                        if active_checkout is not None
+                        else None
+                    ),
+                    "defaultBranch": default,
+                    "head": branch.head,
+                    "identity": primary.identity,
+                    "primary": str(primary.path),
+                },
+            ))
+    return findings
+
+
+def discover_workspace_repositories(workspace_root: Path) -> set[Path]:
     if not workspace_root.is_dir():
         raise AuditError(f"workspace root is not a directory: {workspace_root}")
     candidates: list[Path] = []
@@ -341,15 +532,27 @@ def evaluate(workspace_root: Path, allowed: set[Path]) -> list[Finding]:
                 f"workspace contains more than {MAX_REPOSITORIES} repositories"
             )
         pending.extend(sorted(discovered, key=str))
+    return candidate_paths
+
+
+def evaluate(
+    workspace_root: Path, allowed: set[Path]
+) -> tuple[list[Finding], dict[str, Any]]:
+    candidate_paths = discover_workspace_repositories(workspace_root)
     checkouts = [
         inspect_checkout(candidate) for candidate in sorted(candidate_paths, key=str)
     ]
+    inventory = workspace_inventory(checkouts)
+    inventory_by_path = {
+        Path(entry["path"]): entry for entry in inventory["entries"]
+    }
     groups: dict[str, list[Checkout]] = {}
     for checkout in checkouts:
         groups.setdefault(checkout.identity, []).append(checkout)
 
     findings: list[Finding] = []
     findings.extend(allocation_findings(checkouts))
+    findings.extend(local_branch_findings(checkouts, allowed))
     for identity in sorted(groups):
         group = groups[identity]
         if len(group) < 2:
@@ -379,6 +582,7 @@ def evaluate(workspace_root: Path, allowed: set[Path]) -> list[Finding]:
                     "identity": identity,
                     "path": str(checkout.path),
                     "primary": str(primary.path),
+                    "workspaceClassification": inventory_by_path[checkout.path],
                 },
             ))
     return sorted(
@@ -387,14 +591,17 @@ def evaluate(workspace_root: Path, allowed: set[Path]) -> list[Finding]:
             item.code,
             json.dumps(item.evidence, ensure_ascii=False, sort_keys=True),
         ),
-    )
+    ), inventory
 
 
-def report_payload(findings: list[Finding]) -> dict[str, Any]:
+def report_payload(
+    findings: list[Finding], inventory: dict[str, Any]
+) -> dict[str, Any]:
     return {
         "schema": REPORT_SCHEMA,
         "status": "passed" if not findings else "failed",
         "summary": {"errors": len(findings), "warnings": 0, "findings": len(findings)},
+        "inventory": inventory,
         "findings": [asdict(item) for item in findings],
     }
 
@@ -433,9 +640,12 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     findings: list[Finding]
+    inventory: dict[str, Any]
     try:
         allowed = {path.expanduser().resolve() for path in args.allow}
-        findings = evaluate(args.workspace_root.expanduser().resolve(), allowed)
+        findings, inventory = evaluate(
+            args.workspace_root.expanduser().resolve(), allowed
+        )
     except AuditError as error:
         findings = [Finding(
             code="GOV-WORKSPACE-LIFECYCLE-003",
@@ -444,8 +654,13 @@ def main(argv: list[str] | None = None) -> int:
             remediation="Repair repository metadata or narrow the explicit workspace root.",
             evidence={"reason": str(error)},
         )]
+        inventory = {
+            "schema": None,
+            "readOnly": True,
+            "entries": [],
+        }
 
-    payload = report_payload(findings)
+    payload = report_payload(findings, inventory)
     if args.format == "json":
         print(json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")))
     else:
