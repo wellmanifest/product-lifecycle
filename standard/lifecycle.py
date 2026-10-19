@@ -160,6 +160,9 @@ class ProfileError:
     line: int
 
 
+AUDIT_SCHEMA = "lifecycle.compaction-audit/v1"
+
+
 @dataclass
 class Lifecycle:
     name: str
@@ -173,6 +176,16 @@ class Lifecycle:
     transitions: list[Transition] = field(default_factory=list)
     rejects: list[Reject] = field(default_factory=list)
     errors: dict[str, ProfileError] = field(default_factory=dict)
+    uncompacted_states: list[State] = field(default_factory=list)
+    uncompacted_events: list[str] = field(default_factory=list)
+    uncompacted_evidence: list[str] = field(default_factory=list)
+    uncompacted_transitions: list[Transition] = field(default_factory=list)
+    uncompacted_rejects: list[Reject] = field(default_factory=list)
+    batch_state_count: int = 0
+    batch_event_count: int = 0
+    batch_evidence_count: int = 0
+    state_set_transition_count: int = 0
+    state_set_reject_count: int = 0
 
     def summary(self) -> dict[str, Any]:
         initial = sorted(state.name for state in self.states.values() if state.initial)
@@ -290,6 +303,35 @@ def _tokens(text: str) -> list[str]:
     return list(lexer)
 
 
+def _extract_bracketed_list(
+    tokens: list[str], start_index: int
+) -> tuple[list[str], int] | None:
+    if start_index >= len(tokens) or not tokens[start_index].startswith("["):
+        return None
+    end_index = -1
+    for idx in range(start_index, len(tokens)):
+        if "]" in tokens[idx]:
+            if not tokens[idx].endswith("]") or "[" in tokens[idx][1:]:
+                return None
+            end_index = idx
+            break
+        if idx > start_index and "[" in tokens[idx]:
+            return None
+    if end_index == -1:
+        return None
+    joined = " ".join(tokens[start_index : end_index + 1])
+    inner = joined[1:-1].strip()
+    if not inner:
+        return None
+    items: list[str] = []
+    for raw_item in inner.split(","):
+        item = raw_item.strip()
+        if not item or any(ch.isspace() for ch in item):
+            return None
+        items.append(item)
+    return items, end_index + 1
+
+
 def _declare(
     values: dict[str, Any],
     name: str,
@@ -342,6 +384,27 @@ def _parse_statement(
             return
         state = State(tokens[1], "INITIAL" in modifiers, "TERMINAL" in modifiers, line)
         _declare(model.states, state.name, state, "state", line, model, emitter)
+        model.uncompacted_states.append(state)
+        return
+    if keyword == "STATES":
+        parsed = _extract_bracketed_list(tokens, 1)
+        if parsed is None:
+            emitter.emit("LFC-SYNTAX-002", line, "STATES syntax is invalid", model.name)
+            return
+        names, next_idx = parsed
+        modifiers = tokens[next_idx:]
+        if any(item not in {"INITIAL", "TERMINAL"} for item in modifiers):
+            emitter.emit("LFC-SYNTAX-002", line, "STATES syntax is invalid", model.name)
+            return
+        if len(set(modifiers)) != len(modifiers):
+            emitter.emit(
+                "LFC-SYNTAX-002", line, "STATES modifiers must be unique", model.name
+            )
+            return
+        for name in names:
+            state = State(name, "INITIAL" in modifiers, "TERMINAL" in modifiers, line)
+            _declare(model.states, state.name, state, "state", line, model, emitter)
+            model.batch_state_count += 1
         return
     if keyword in {"EVENT", "EVIDENCE"}:
         if len(tokens) != 2:
@@ -351,8 +414,76 @@ def _parse_statement(
             return
         target = model.events if keyword == "EVENT" else model.evidence
         _declare(target, tokens[1], line, keyword.lower(), line, model, emitter)
+        if keyword == "EVENT":
+            model.uncompacted_events.append(tokens[1])
+        else:
+            model.uncompacted_evidence.append(tokens[1])
+        return
+    if keyword in {"EVENTS", "EVIDENCES"}:
+        parsed = _extract_bracketed_list(tokens, 1)
+        if parsed is None or parsed[1] != len(tokens):
+            emitter.emit(
+                "LFC-SYNTAX-002", line, f"{keyword} syntax is invalid", model.name
+            )
+            return
+        names, _ = parsed
+        target = model.events if keyword == "EVENTS" else model.evidence
+        kind = "event" if keyword == "EVENTS" else "evidence"
+        for name in names:
+            _declare(target, name, line, kind, line, model, emitter)
+            if keyword == "EVENTS":
+                model.batch_event_count += 1
+            else:
+                model.batch_evidence_count += 1
         return
     if keyword == "TRANSITION":
+        if len(tokens) >= 2 and tokens[1].startswith("["):
+            parsed = _extract_bracketed_list(tokens, 1)
+            if parsed is None:
+                emitter.emit(
+                    "LFC-SYNTAX-002", line, "TRANSITION syntax is invalid", model.name
+                )
+                return
+            sources, next_idx = parsed
+            rest = tokens[next_idx:]
+            valid = (
+                len(rest) in {4, 6}
+                and rest[0] == "->"
+                and rest[2] == "ON"
+                and (len(rest) == 4 or rest[4] == "REQUIRES")
+            )
+            if not valid:
+                emitter.emit(
+                    "LFC-SYNTAX-002", line, "TRANSITION syntax is invalid", model.name
+                )
+                return
+            target_state, event_name = rest[1], rest[3]
+            if any(
+                IDENTIFIER.fullmatch(item) is None
+                for item in [*sources, target_state, event_name]
+            ):
+                emitter.emit(
+                    "LFC-MODEL-001",
+                    line,
+                    "TRANSITION identifiers are invalid",
+                    model.name,
+                )
+                return
+            evidence = rest[5] if len(rest) == 6 else None
+            if evidence is not None and IDENTIFIER.fullmatch(evidence) is None:
+                emitter.emit(
+                    "LFC-MODEL-001",
+                    line,
+                    "TRANSITION evidence identifier is invalid",
+                    model.name,
+                )
+                return
+            for source_state in sources:
+                model.transitions.append(
+                    Transition(source_state, target_state, event_name, evidence, line)
+                )
+                model.state_set_transition_count += 1
+            return
         valid = len(tokens) in {6, 8} and tokens[2] == "->" and tokens[4] == "ON"
         valid = valid and (len(tokens) == 6 or tokens[6] == "REQUIRES")
         if not valid:
@@ -375,11 +506,37 @@ def _parse_statement(
                 model.name,
             )
             return
-        model.transitions.append(
-            Transition(tokens[1], tokens[3], tokens[5], evidence, line)
-        )
+        transition = Transition(tokens[1], tokens[3], tokens[5], evidence, line)
+        model.transitions.append(transition)
+        model.uncompacted_transitions.append(transition)
         return
     if keyword == "REJECT":
+        if len(tokens) >= 2 and tokens[1].startswith("["):
+            parsed = _extract_bracketed_list(tokens, 1)
+            if parsed is None:
+                emitter.emit(
+                    "LFC-SYNTAX-002", line, "REJECT syntax is invalid", model.name
+                )
+                return
+            states, next_idx = parsed
+            rest = tokens[next_idx:]
+            if len(rest) != 4 or rest[0] != "ON" or rest[2] != "WITH":
+                emitter.emit(
+                    "LFC-SYNTAX-002", line, "REJECT syntax is invalid", model.name
+                )
+                return
+            event_name, error_code = rest[1], rest[3]
+            if any(
+                IDENTIFIER.fullmatch(item) is None for item in [*states, event_name]
+            ):
+                emitter.emit(
+                    "LFC-MODEL-001", line, "REJECT identifiers are invalid", model.name
+                )
+                return
+            for state_name in states:
+                model.rejects.append(Reject(state_name, event_name, error_code, line))
+                model.state_set_reject_count += 1
+            return
         if len(tokens) != 6 or tokens[2] != "ON" or tokens[4] != "WITH":
             emitter.emit("LFC-SYNTAX-002", line, "REJECT syntax is invalid", model.name)
             return
@@ -391,7 +548,9 @@ def _parse_statement(
                 "LFC-MODEL-001", line, "REJECT identifiers are invalid", model.name
             )
             return
-        model.rejects.append(Reject(tokens[1], tokens[3], tokens[5], line))
+        reject = Reject(tokens[1], tokens[3], tokens[5], line)
+        model.rejects.append(reject)
+        model.uncompacted_rejects.append(reject)
         return
     if keyword == "ERROR":
         if len(tokens) != 6 or tokens[2] != "SEVERITY" or tokens[4] != "MESSAGE":
@@ -699,6 +858,182 @@ def render_text(report: ValidationReport) -> str:
     return "\n".join(lines)
 
 
+def audit_compaction(
+    text: str,
+    *,
+    source: str = "<memory>",
+    catalog: dict[str, CatalogEntry] | None = None,
+) -> dict[str, Any]:
+    active_catalog = catalog if catalog is not None else embedded_catalog()
+    report = validate_text(text, source=source, catalog=active_catalog)
+    findings: list[dict[str, Any]] = []
+    lifecycle_summaries: list[dict[str, Any]] = []
+    for model in report.lifecycles:
+        doc_findings: list[dict[str, Any]] = []
+        plain_states = [
+            state.name
+            for state in model.uncompacted_states
+            if not state.initial and not state.terminal
+        ]
+        if len(plain_states) >= 3:
+            doc_findings.append(
+                {
+                    "code": "LFC-COMPACT-001",
+                    "document": model.name,
+                    "message": (
+                        f"{len(plain_states)} plain STATE declarations can be "
+                        "compacted into STATES [...]"
+                    ),
+                    "suggestion": f"STATES [{', '.join(plain_states)}]",
+                    "estimated_lines_saved": len(plain_states) - 1,
+                }
+            )
+        terminal_states = [
+            state.name
+            for state in model.uncompacted_states
+            if not state.initial and state.terminal
+        ]
+        if len(terminal_states) >= 2:
+            doc_findings.append(
+                {
+                    "code": "LFC-COMPACT-001",
+                    "document": model.name,
+                    "message": (
+                        f"{len(terminal_states)} terminal STATE declarations can be "
+                        "compacted into STATES [...] TERMINAL"
+                    ),
+                    "suggestion": f"STATES [{', '.join(terminal_states)}] TERMINAL",
+                    "estimated_lines_saved": len(terminal_states) - 1,
+                }
+            )
+        if len(model.uncompacted_events) >= 3:
+            doc_findings.append(
+                {
+                    "code": "LFC-COMPACT-002",
+                    "document": model.name,
+                    "message": (
+                        f"{len(model.uncompacted_events)} EVENT declarations can be "
+                        "compacted into EVENTS [...]"
+                    ),
+                    "suggestion": f"EVENTS [{', '.join(model.uncompacted_events)}]",
+                    "estimated_lines_saved": len(model.uncompacted_events) - 1,
+                }
+            )
+        if len(model.uncompacted_evidence) >= 3:
+            doc_findings.append(
+                {
+                    "code": "LFC-COMPACT-003",
+                    "document": model.name,
+                    "message": (
+                        f"{len(model.uncompacted_evidence)} EVIDENCE declarations can "
+                        "be compacted into EVIDENCES [...]"
+                    ),
+                    "suggestion": f"EVIDENCES [{', '.join(model.uncompacted_evidence)}]",
+                    "estimated_lines_saved": len(model.uncompacted_evidence) - 1,
+                }
+            )
+        transition_groups: dict[tuple[str, str, str | None], list[str]] = {}
+        for transition in model.uncompacted_transitions:
+            key = (transition.target, transition.event, transition.evidence)
+            group = transition_groups.setdefault(key, [])
+            if transition.source not in group:
+                group.append(transition.source)
+        for (target_state, event_name, evidence), sources in transition_groups.items():
+            if len(sources) >= 2:
+                requires_clause = f" REQUIRES {evidence}" if evidence else ""
+                doc_findings.append(
+                    {
+                        "code": "LFC-COMPACT-004",
+                        "document": model.name,
+                        "message": (
+                            f"{len(sources)} transitions into {target_state} on "
+                            f"{event_name} share identical target/event/evidence"
+                        ),
+                        "suggestion": (
+                            f"TRANSITION [{', '.join(sources)}] -> {target_state} "
+                            f"ON {event_name}{requires_clause}"
+                        ),
+                        "estimated_lines_saved": len(sources) - 1,
+                    }
+                )
+        reject_groups: dict[tuple[str, str], list[str]] = {}
+        for reject in model.uncompacted_rejects:
+            rkey = (reject.event, reject.error)
+            rgroup = reject_groups.setdefault(rkey, [])
+            if reject.state not in rgroup:
+                rgroup.append(reject.state)
+        for (event_name, error_code), states in reject_groups.items():
+            if len(states) >= 2:
+                doc_findings.append(
+                    {
+                        "code": "LFC-COMPACT-005",
+                        "document": model.name,
+                        "message": (
+                            f"{len(states)} reject rules on {event_name} with "
+                            f"{error_code} can be compacted"
+                        ),
+                        "suggestion": (
+                            f"REJECT [{', '.join(states)}] ON {event_name} "
+                            f"WITH {error_code}"
+                        ),
+                        "estimated_lines_saved": len(states) - 1,
+                    }
+                )
+        findings.extend(doc_findings)
+        lifecycle_summaries.append(
+            {
+                "name": model.name,
+                "state_count": len(model.states),
+                "event_count": len(model.events),
+                "evidence_count": len(model.evidence),
+                "transition_count": len(model.transitions),
+                "reject_count": len(model.rejects),
+                "batch_states": model.batch_state_count,
+                "batch_events": model.batch_event_count,
+                "batch_evidence": model.batch_evidence_count,
+                "state_set_transitions": model.state_set_transition_count,
+                "state_set_rejects": model.state_set_reject_count,
+                "finding_count": len(doc_findings),
+            }
+        )
+    return {
+        "schema": AUDIT_SCHEMA,
+        "source": source,
+        "valid": report.valid,
+        "lifecycle_count": len(report.lifecycles),
+        "finding_count": len(findings),
+        "estimated_lines_saved": sum(
+            item["estimated_lines_saved"] for item in findings
+        ),
+        "lifecycles": lifecycle_summaries,
+        "findings": findings,
+    }
+
+
+def audit_path(
+    path: Path, catalog: dict[str, CatalogEntry] | None = None
+) -> dict[str, Any]:
+    active_catalog = catalog if catalog is not None else embedded_catalog()
+    content = path.read_text(encoding="utf-8")
+    return audit_compaction(content, source=str(path), catalog=active_catalog)
+
+
+def render_audit_text(audit: dict[str, Any]) -> str:
+    lines = [
+        (
+            f"AUDIT {audit['source']}: lifecycles={audit['lifecycle_count']} "
+            f"findings={audit['finding_count']} "
+            f"estimated_lines_saved={audit['estimated_lines_saved']}"
+        )
+    ]
+    for finding in audit["findings"]:
+        lines.append(
+            f"- [{finding['code']}] {finding['document']}: {finding['message']} "
+            f"=> {finding['suggestion']}"
+        )
+    return "\n".join(lines)
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="lifecycle", description="Validate Lifecycle DSL v1"
@@ -708,6 +1043,12 @@ def _parser() -> argparse.ArgumentParser:
     validate.add_argument("path", type=Path)
     validate.add_argument("--format", choices=("text", "json"), default="text")
     validate.add_argument("--catalog", type=Path)
+    audit = subcommands.add_parser(
+        "audit", help="audit one lifecycle bundle for compaction opportunities"
+    )
+    audit.add_argument("path", type=Path)
+    audit.add_argument("--format", choices=("text", "json"), default="text")
+    audit.add_argument("--catalog", type=Path)
     return parser
 
 
@@ -719,6 +1060,13 @@ def main(argv: list[str] | None = None) -> int:
     try:
         args = _parser().parse_args(argv)
         catalog = load_catalog(args.catalog) if args.catalog else embedded_catalog()
+        if args.command == "audit":
+            audit = audit_path(args.path, catalog)
+            if args.format == "json":
+                print(json.dumps(audit, indent=2, sort_keys=True))
+            else:
+                print(render_audit_text(audit))
+            return 0 if audit["valid"] else 1
         report = validate_path(args.path, catalog)
         if args.format == "json":
             print(json.dumps(report.as_dict(), indent=2, sort_keys=True))
