@@ -341,7 +341,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         if args.all:
-            print(json.dumps(run_all(), indent=2, sort_keys=True))
+            print(json.dumps(run_all(), indent=2, sort_keys=True, allow_nan=False))
         elif args.file:
             target = Path(os.path.abspath(os.fspath(args.file)))
             validate_document(strict_loads(read_regular_utf8(target)))
