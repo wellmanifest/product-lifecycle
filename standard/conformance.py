@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -31,9 +32,11 @@ from product_primitives import (  # noqa: E402
     bounded_list,
     canonical,
     digest,
+    enum_str,
     exact,
     file_digest,
     iso_date_value,
+    read_regular_utf8,
     reject_sensitive,
     strict_bool,
     strict_loads,
@@ -62,6 +65,7 @@ __all__ = [
     "file_digest",
     "lifecycle_example",
     "main",
+    "read_regular_utf8",
     "receipt_example",
     "request_example",
     "run_all",
@@ -76,6 +80,18 @@ __all__ = [
     "validate_request",
 ]
 
+_AVAILABILITY_STATUS = {"offered", "restricted", "prohibited"}
+_PRODUCT_KINDS = {"software", "saas", "service", "hardware", "content", "mixed"}
+_OPERATIONS = {
+    "inspect",
+    "register",
+    "release",
+    "restrict",
+    "deprecate",
+    "withdraw",
+    "sunset",
+}
+
 
 def validate_availability(c: Contracts, items: Any) -> list[dict[str, Any]]:
     entries = bounded_list(items, "invalid availability", minimum=1, maximum=64)
@@ -87,8 +103,7 @@ def validate_availability(c: Contracts, items: Any) -> list[dict[str, Any]]:
         if ref in seen:
             raise ContractError("duplicate availability")
         seen.add(ref)
-        if item["status"] not in {"offered", "restricted", "prohibited"}:
-            raise ContractError("invalid availability status")
+        enum_str(item["status"], _AVAILABILITY_STATUS, "invalid availability status")
         out.append(item)
     return out
 
@@ -112,10 +127,8 @@ def validate_product(c: Contracts, value: Any) -> None:
     c.ref("productRef", value["ref"])
     if not isinstance(value["name"], str) or not 1 <= len(value["name"]) <= 120:
         raise ContractError("invalid product name")
-    if value["kind"] not in {"software", "saas", "service", "hardware", "content", "mixed"}:
-        raise ContractError("invalid product kind")
-    if value["stage"] not in STAGES:
-        raise ContractError("invalid product stage")
+    enum_str(value["kind"], _PRODUCT_KINDS, "invalid product kind")
+    stage = enum_str(value["stage"], STAGES, "invalid product stage")
     c.ref("licenseRef", value["licenseRef"])
     c.ref("packRef", value["legalPackRef"])
     availability = validate_availability(c, value["availability"])
@@ -124,9 +137,9 @@ def validate_product(c: Contracts, value: Any) -> None:
     ):
         c.ref("entitlementRef", entitlement)
     is_public = strict_bool(value["public"], "invalid public flag")
-    if is_public and value["stage"] == "draft":
+    if is_public and stage == "draft":
         raise ContractError("draft product cannot be public")
-    if value["stage"] in {"generally-available", "restricted"} and not any(
+    if stage in {"generally-available", "restricted"} and not any(
         item["status"] == "offered" for item in availability
     ):
         raise ContractError("released product has no offered jurisdiction")
@@ -180,16 +193,7 @@ def validate_request(c: Contracts, value: Any) -> None:
     ):
         raise ContractError("unsupported request")
     c.ref("identifier", value["requestId"])
-    if value["operation"] not in {
-        "inspect",
-        "register",
-        "release",
-        "restrict",
-        "deprecate",
-        "withdraw",
-        "sunset",
-    }:
-        raise ContractError("unsupported operation")
+    enum_str(value["operation"], _OPERATIONS, "unsupported operation")
     for name in ("catalogRef", "productRef", "packRef", "intentRef", "grantRef"):
         key = "legalPackRef" if name == "packRef" else name
         c.ref(name, value[key])
@@ -219,18 +223,17 @@ def validate_lifecycle(c: Contracts, value: Any) -> None:
         raise ContractError("unsupported state")
     c.ref("catalogRef", value["catalogRef"])
     c.ref("productRef", value["productRef"])
-    if value["stage"] not in STAGES:
-        raise ContractError("invalid stage")
+    stage = enum_str(value["stage"], STAGES, "invalid stage")
     bounded_int(value["version"], 1, 2_147_483_647, "invalid version")
     time_value(value["updatedAt"])
     availability = validate_availability(c, value["availability"])
-    if value["stage"] in {"generally-available", "restricted"} and not any(
+    if stage in {"generally-available", "restricted"} and not any(
         item["status"] == "offered" for item in availability
     ):
         raise ContractError("active product has no offered jurisdiction")
     if "sunsetAt" in value:
         iso_date_value(value["sunsetAt"])
-    elif value["stage"] == "sunset":
+    elif stage == "sunset":
         raise ContractError("sunset state missing date")
     if "successorProductRef" in value and (
         c.ref("productRef", value["successorProductRef"]) == value["productRef"]
@@ -268,8 +271,7 @@ def validate_receipt(c: Contracts, value: Any) -> None:
     c.ref("productRef", value["productRef"])
     c.ref("sha256", value["inputHash"])
     c.ref("sha256", value["planHash"])
-    if value["outcome"] not in ALLOWED_OUTCOMES:
-        raise ContractError("invalid outcome")
+    enum_str(value["outcome"], ALLOWED_OUTCOMES, "invalid outcome")
     if time_value(value["completedAt"]) < time_value(value["startedAt"]):
         raise ContractError("receipt chronology")
     for ref in unique_list(value["evidenceRefs"], "invalid evidenceRefs", minimum=1, maximum=64):
@@ -281,6 +283,9 @@ def validate_receipt(c: Contracts, value: Any) -> None:
 def validate_document(value: Any) -> None:
     if not isinstance(value, dict):
         raise ContractError("expected object")
+    schema_id = value.get("schema")
+    if not isinstance(schema_id, str):
+        raise ContractError("unsupported document schema")
     c = Contracts()
     c.integrity()
     dispatch = {
@@ -289,7 +294,7 @@ def validate_document(value: Any) -> None:
         "wellmanifest.product-lifecycle-state/v1": validate_lifecycle,
         "wellmanifest.product-lifecycle-receipt/v1": validate_receipt,
     }
-    validator = dispatch.get(value.get("schema"))
+    validator = dispatch.get(schema_id)
     if validator is None:
         raise ContractError("unsupported document schema")
     validator(c, value)
@@ -338,7 +343,8 @@ def main(argv: list[str] | None = None) -> int:
         if args.all:
             print(json.dumps(run_all(), indent=2, sort_keys=True))
         elif args.file:
-            validate_document(strict_loads(args.file.read_text("utf-8")))
+            target = Path(os.path.abspath(os.fspath(args.file)))
+            validate_document(strict_loads(read_regular_utf8(target)))
             print(f"PASS: {args.file}")
         else:
             parser.error("choose --all or --file")

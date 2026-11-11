@@ -3,9 +3,13 @@
 
 from __future__ import annotations
 
+import errno
 import hashlib
 import json
+import math
+import os
 import re
+import stat
 from datetime import date, datetime
 from pathlib import Path
 from typing import Any
@@ -13,6 +17,8 @@ from typing import Any
 import lifecycle
 
 ROOT = Path(__file__).resolve().parent
+MAX_INPUT_BYTES = 4 * 1024 * 1024
+MAX_JSON_DEPTH = 64
 SCHEMA_URI = "https://wellmanifest.dev/schemas/product-lifecycle/v1"
 SCHEMA_PATH = ROOT / "product-lifecycle.schema.json"
 GRAMMAR_PATH = ROOT / "product-lifecycle.v1.gbnf"
@@ -39,9 +45,11 @@ SECRET_MATERIAL = re.compile(
     re.I,
 )
 SAFE_ASSERTIONS = {"secretsRedacted", "commercialDataStored"}
-RFC3339_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-]\d{2}:\d{2})$")
-ISO_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
-SEMVER_RE = re.compile(r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z.-]+)?$")
+RFC3339_RE = re.compile(
+    r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-]\d{2}:\d{2})\Z"
+)
+ISO_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}\Z")
+SEMVER_RE = re.compile(r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z.-]+)?\Z")
 STAGES = {
     "draft",
     "preview",
@@ -80,20 +88,115 @@ class ContractError(ValueError):
     """A bounded error that never repeats untrusted commercial or host data."""
 
 
+def _enforce_json_bounds(root: Any, *, max_depth: int = MAX_JSON_DEPTH) -> None:
+    stack: list[tuple[Any, int]] = [(root, 0)]
+    while stack:
+        current, depth = stack.pop()
+        if depth > max_depth:
+            raise ContractError("JSON nesting depth exceeded")
+        if isinstance(current, float) and not math.isfinite(current):
+            raise ContractError("non-finite JSON float is forbidden")
+        if isinstance(current, dict):
+            next_depth = depth + 1
+            if next_depth > max_depth and current:
+                raise ContractError("JSON nesting depth exceeded")
+            for key, child in current.items():
+                if not isinstance(key, str):
+                    raise ContractError("JSON object key must be a string")
+                if isinstance(child, (dict, list, float)):
+                    stack.append((child, next_depth))
+        elif isinstance(current, list):
+            next_depth = depth + 1
+            if next_depth > max_depth and current:
+                raise ContractError("JSON nesting depth exceeded")
+            for child in current:
+                if isinstance(child, (dict, list, float)):
+                    stack.append((child, next_depth))
+
+
+def read_regular_utf8(path: str | Path, *, max_bytes: int = MAX_INPUT_BYTES) -> str:
+    raw_path = os.fspath(path)
+    st = os.lstat(raw_path)
+    if stat.S_ISLNK(st.st_mode):
+        raise ContractError("symlink JSON input is forbidden")
+    if not stat.S_ISREG(st.st_mode):
+        raise ContractError("JSON input must be a regular file")
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+    try:
+        fd = os.open(raw_path, flags)
+    except OSError as err:
+        if err.errno == errno.ELOOP:
+            raise ContractError("symlink JSON input is forbidden") from err
+        raise
+    try:
+        fst = os.fstat(fd)
+        if not stat.S_ISREG(fst.st_mode) or (st.st_dev, st.st_ino) != (fst.st_dev, fst.st_ino):
+            raise ContractError("JSON input must be an unchanged regular file")
+        if fst.st_size > max_bytes:
+            raise ContractError("JSON input exceeds maximum size")
+        chunks: list[bytes] = []
+        total = 0
+        while True:
+            chunk = os.read(fd, min(65536, max_bytes + 1 - total))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            total += len(chunk)
+            if total > max_bytes:
+                raise ContractError("JSON input exceeds maximum size")
+        raw = b"".join(chunks)
+    finally:
+        os.close(fd)
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError as err:
+        raise ContractError("invalid UTF-8 JSON input") from err
+
+
 def strict_loads(raw: str) -> Any:
+    if not isinstance(raw, str):
+        raise ContractError("JSON input must be text")
+    if len(raw.encode("utf-8", errors="surrogatepass")) > MAX_INPUT_BYTES:
+        raise ContractError("JSON input exceeds maximum size")
+
     def _unique_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
         obj: dict[str, Any] = {}
         for key, val in pairs:
+            if not isinstance(key, str):
+                raise ContractError("JSON object key must be a string")
             if key in obj:
                 raise ContractError("duplicate JSON key")
             obj[key] = val
         return obj
 
-    return json.loads(raw, object_pairs_hook=_unique_pairs)
+    def _reject_constant(token: str) -> Any:
+        raise ContractError("non-finite JSON constant is forbidden")
+
+    def _parse_finite_float(token: str) -> float:
+        parsed = float(token)
+        if not math.isfinite(parsed):
+            raise ContractError("JSON float out of finite IEEE-754 range")
+        return parsed
+
+    try:
+        data = json.loads(
+            raw,
+            object_pairs_hook=_unique_pairs,
+            parse_constant=_reject_constant,
+            parse_float=_parse_finite_float,
+        )
+    except ContractError:
+        raise
+    except RecursionError as err:
+        raise ContractError("JSON nesting depth exceeded") from err
+    _enforce_json_bounds(data)
+    return data
 
 
 def canonical(value: Any) -> str:
-    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return json.dumps(
+        value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False
+    )
 
 
 def digest(value: str) -> str:
@@ -107,11 +210,19 @@ def file_digest(path: Path) -> str:
 def exact(value: Any, required: set[str], optional: set[str] | None = None) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise ContractError("expected object")
+    if any(not isinstance(k, str) for k in value):
+        raise ContractError("JSON object key must be a string")
     optional_keys = optional or set()
     if set(value) - required - optional_keys:
         raise ContractError("undeclared field")
     if required - set(value):
         raise ContractError("missing field")
+    return value
+
+
+def enum_str(value: Any, allowed: set[str], message: str) -> str:
+    if not isinstance(value, str) or value not in allowed:
+        raise ContractError(message)
     return value
 
 
@@ -166,16 +277,23 @@ def iso_date_value(value: Any) -> date:
 
 
 def reject_sensitive(value: Any) -> None:
-    if isinstance(value, dict):
-        for key, child in value.items():
-            if SENSITIVE.search(key) and key not in SAFE_ASSERTIONS:
-                raise ContractError("sensitive data channel")
-            reject_sensitive(child)
-    elif isinstance(value, list):
-        for child in value:
-            reject_sensitive(child)
-    elif isinstance(value, str) and SECRET_MATERIAL.search(value):
-        raise ContractError("credential material is forbidden")
+    stack: list[tuple[Any, int]] = [(value, 0)]
+    while stack:
+        current, depth = stack.pop()
+        if depth > MAX_JSON_DEPTH:
+            raise ContractError("JSON nesting depth exceeded")
+        if isinstance(current, dict):
+            for key, child in current.items():
+                if not isinstance(key, str):
+                    raise ContractError("JSON object key must be a string")
+                if SENSITIVE.search(key) and key not in SAFE_ASSERTIONS:
+                    raise ContractError("sensitive data channel")
+                stack.append((child, depth + 1))
+        elif isinstance(current, list):
+            for child in current:
+                stack.append((child, depth + 1))
+        elif isinstance(current, str) and SECRET_MATERIAL.search(current):
+            raise ContractError("credential material is forbidden")
 
 
 def validate_lifecycle_profile(schema: dict[str, Any]) -> None:
@@ -205,8 +323,8 @@ def validate_lifecycle_profile(schema: dict[str, Any]) -> None:
 
 class Contracts:
     def __init__(self) -> None:
-        self.schema = strict_loads(SCHEMA_PATH.read_text("utf-8"))
-        self.grammar = GRAMMAR_PATH.read_text("utf-8")
+        self.schema = strict_loads(read_regular_utf8(SCHEMA_PATH))
+        self.grammar = read_regular_utf8(GRAMMAR_PATH)
         defs = self.schema.get("$defs", {})
         names = (
             "identifier",
