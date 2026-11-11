@@ -10,6 +10,7 @@ import unittest
 from pathlib import Path
 
 import conformance as prod
+import product_io as pio
 import product_primitives as pp
 
 
@@ -144,6 +145,55 @@ class ProductLifecycleHardeningTests(unittest.TestCase):
             with self.assertRaises(prod.ContractError):
                 prod.file_digest(deep_sym)
             self.assertEqual(prod.main(["--file", str(deep_sym)]), 1)
+
+    def test_cli_dotdot_symlink_traversal_schema_depth_product_names_and_line_budget(self) -> None:
+        for bad_int in ('{"x": ' + "9" * 401 + "}", '{"x": -' + "1" + "0" * 400 + "}"):
+            with self.assertRaises(prod.ContractError):
+                pio.strict_loads(bad_int)
+
+        deep_schema: object = {"type": "string"}
+        for _ in range(pio.MAX_JSON_DEPTH + 4):
+            deep_schema = {"type": "object", "additionalProperties": False, "items": deep_schema}
+        with self.assertRaises(prod.ContractError):
+            self.contracts._closed(deep_schema)
+
+        for bad_name in ("   ", "prod\nname", "prod\x00name", "prod\x7f", "prod\ud800"):
+            cat = copy.deepcopy(prod.catalog_example())
+            cat["products"][0]["name"] = bad_name
+            with self.assertRaises(prod.ContractError):
+                prod.validate_catalog(self.contracts, cat)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            real_dir = base / "real" / "nested"
+            real_dir.mkdir(parents=True)
+            sibling = base / "sibling"
+            sibling.mkdir()
+            req_path = real_dir / "req.json"
+            req_path.write_text(json.dumps(prod.request_example()), encoding="utf-8")
+            (base / "sym_dir").symlink_to(base / "real")
+
+            unnorm_abs = Path(f"{base}/sym_dir/../real/nested/req.json")
+            with self.assertRaises(prod.ContractError):
+                pio.read_regular_utf8(unnorm_abs)
+            self.assertEqual(prod.main(["--file", str(unnorm_abs)]), 1)
+
+            prev_cwd = Path.cwd()
+            try:
+                os.chdir(base)
+                with self.assertRaises(prod.ContractError):
+                    pio.read_regular_utf8(Path("sym_dir/../real/nested/req.json"))
+                self.assertEqual(prod.main(["--file", "sym_dir/../real/nested/req.json"]), 1)
+                os.chdir(sibling)
+                with self.assertRaises(prod.ContractError):
+                    pio.read_regular_utf8(Path("../sym_dir/nested/req.json"))
+                self.assertEqual(prod.main(["--file", "../sym_dir/nested/req.json"]), 1)
+            finally:
+                os.chdir(prev_cwd)
+
+        for py_file in sorted([*pp.ROOT.glob("*.py"), *(pp.ROOT.parent / "tests").glob("*.py")]):
+            lines = len(py_file.read_text(encoding="utf-8").splitlines())
+            self.assertLess(lines, 500, f"{py_file} has {lines} lines")
 
 
 if __name__ == "__main__":

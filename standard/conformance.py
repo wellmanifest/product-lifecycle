@@ -35,6 +35,9 @@ from product_primitives import (  # noqa: E402
     enum_str,
     exact,
     file_digest,
+    has_control_chars,
+    has_symlink_ancestor,
+    is_valid_utf8,
     iso_date_value,
     read_regular_utf8,
     reject_sensitive,
@@ -125,7 +128,14 @@ def validate_product(c: Contracts, value: Any) -> None:
         {"successorProductRef"},
     )
     c.ref("productRef", value["ref"])
-    if not isinstance(value["name"], str) or not 1 <= len(value["name"]) <= 120:
+    name = value["name"]
+    if (
+        not isinstance(name, str)
+        or not 1 <= len(name) <= 120
+        or not name.strip()
+        or not is_valid_utf8(name)
+        or has_control_chars(name, allow_newlines=False)
+    ):
         raise ContractError("invalid product name")
     enum_str(value["kind"], _PRODUCT_KINDS, "invalid product kind")
     stage = enum_str(value["stage"], STAGES, "invalid product stage")
@@ -343,6 +353,8 @@ def main(argv: list[str] | None = None) -> int:
         if args.all:
             print(json.dumps(run_all(), indent=2, sort_keys=True, allow_nan=False))
         elif args.file:
+            if has_symlink_ancestor(args.file, include_self=True):
+                raise ContractError("symlink JSON input is forbidden")
             target = Path(os.path.abspath(os.fspath(args.file)))
             validate_document(strict_loads(read_regular_utf8(target)))
             print(f"PASS: {args.file}")

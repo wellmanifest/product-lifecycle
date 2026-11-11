@@ -1,0 +1,89 @@
+{
+  "schema": "new-project.intent/v3",
+  "ticket": "ticket-011",
+  "summary": "Modularize product_io and harden CLI symlink traversal, JSON int bounds, schema depth, and product name controls",
+  "workstream": "integration",
+  "classification": {
+    "kind": "BUG",
+    "priority": "P1",
+    "origin": "health"
+  },
+  "allowedPaths": [
+    "project/ticket-010/README.md",
+    "project/ticket-011/**",
+    "TODO.md",
+    "project/TICKETS.md",
+    "standard/product_io.py",
+    "standard/product_primitives.py",
+    "standard/conformance.py",
+    "standard/test_product_hardening.py"
+  ],
+  "forbiddenPaths": [
+    "project/ticket-*/user-*.md"
+  ],
+  "stacks": [],
+  "dependsOn": [],
+  "conflictsWith": [],
+  "integrationTicket": null,
+  "delivery": {
+    "acceptedBaseSha": "45c2b71fc1cf3c3281b2999fd824ac471e1b0821",
+    "targetBranch": "main",
+    "outcome": "Extract standard/product_io.py, fix CLI os.path.abspath and relative sym_dir/.. symlink-traversal bypasses, bound JSON integer digits before int(), replace recursive Contracts._closed with iterative depth-bounded check, reject blank/C0/DEL/surrogate product names, keep all modules < 500 lines, and close merged ticket-010.",
+    "nonGoals": [
+      "Do not modify vendored standard/lifecycle*.py or frozen schema/grammar/profile digests",
+      "No runtime dependency additions"
+    ],
+    "complexity": "S",
+    "estimatedMinutes": 20,
+    "budgets": {
+      "maxImplementationFiles": 4,
+      "maxAffectedComponents": 1,
+      "maxPublicInterfaceChanges": 0,
+      "maxRuntimeDependencies": 0
+    },
+    "architecture": {
+      "status": "accepted",
+      "decision": "Extract regular-file I/O, symlink-ancestor checks, and bounded strict JSON helpers into standard/product_io.py, re-exported from standard/product_primitives.py; check raw CLI paths before os.path.abspath in conformance.main; make Contracts._closed iterative; and mark merged ticket-010 DONE.",
+      "components": [
+        {
+          "name": "product-lifecycle-conformance",
+          "paths": [
+            "standard/product_io.py",
+            "standard/product_primitives.py",
+            "standard/conformance.py",
+            "standard/test_product_hardening.py"
+          ]
+        }
+      ],
+      "responsibilityChanges": false,
+      "interfaceChanges": [],
+      "dataChanges": [],
+      "ui": {
+        "impact": "none",
+        "states": [],
+        "evidence": []
+      },
+      "rollback": "Revert the ticket branch commit via protected PR delivery."
+    },
+    "runtimeDependencies": [],
+    "validation": [
+      {
+        "criterion": "AC-01",
+        "commands": [
+          "python3 standard/conformance.py --all",
+          "ruff check --no-cache standard tests",
+          "PYTHONDONTWRITEBYTECODE=1 python3 -m pytest -q"
+        ],
+        "evidence": "project/ticket-011/README.md"
+      },
+      {
+        "criterion": "AC-02",
+        "commands": [
+          "./project/governance-check.sh --base origin/main",
+          "wellman check"
+        ],
+        "evidence": "project/ticket-011/README.md"
+      }
+    ]
+  }
+}
