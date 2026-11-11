@@ -1,0 +1,103 @@
+{
+  "schema": "new-project.intent/v3",
+  "ticket": "ticket-007",
+  "summary": "modularize product-lifecycle under 500 lines and harden strict validation",
+  "workstream": "integration",
+  "classification": {
+    "kind": "BUG",
+    "priority": "P1",
+    "origin": "health"
+  },
+  "allowedPaths": [
+    "project/ticket-004/README.md",
+    "project/ticket-006/README.md",
+    "project/ticket-007/**",
+    "TODO.md",
+    "project/TICKETS.md",
+    "pyproject.toml",
+    "standard/conformance.py",
+    "standard/lifecycle.py",
+    "standard/lifecycle_audit.py",
+    "standard/lifecycle_catalog.py",
+    "standard/product_fixtures.py",
+    "standard/product_primitives.py"
+  ],
+  "forbiddenPaths": [
+    "project/ticket-*/user-*.md"
+  ],
+  "stacks": [],
+  "dependsOn": [],
+  "conflictsWith": [],
+  "integrationTicket": null,
+  "delivery": {
+    "acceptedBaseSha": "84cecbe2b5e21d035d81c881d43aebf2643c95f1",
+    "targetBranch": "main",
+    "outcome": "Sync modularized wellmanifest/lifecycle@12bdc4c8 validator (< 500 lines), split product-lifecycle conformance under 500 lines, enforce full schema parity and duplicate-key/bool/type/secret hardening, add pyproject.toml, and close merged tickets 004 and 006.",
+    "nonGoals": [
+      "Do not modify frozen product-lifecycle JSON schema, GBNF grammar, or .lifecycle profile digests",
+      "No runtime dependency additions"
+    ],
+    "complexity": "M",
+    "estimatedMinutes": 30,
+    "budgets": {
+      "maxImplementationFiles": 8,
+      "maxAffectedComponents": 3,
+      "maxPublicInterfaceChanges": 1,
+      "maxRuntimeDependencies": 1
+    },
+    "architecture": {
+      "status": "accepted",
+      "decision": "Sync the 3-module Lifecycle DSL validator from wellmanifest/lifecycle@12bdc4c8 with pinned SHA-256 digests and extract primitives and fixtures into standard/product_primitives.py and standard/product_fixtures.py.",
+      "components": [
+        {
+          "name": "product-lifecycle-conformance",
+          "paths": [
+            "pyproject.toml",
+            "standard/conformance.py",
+            "standard/lifecycle.py",
+            "standard/lifecycle_audit.py",
+            "standard/lifecycle_catalog.py",
+            "standard/product_fixtures.py",
+            "standard/product_primitives.py"
+          ]
+        }
+      ],
+      "responsibilityChanges": false,
+      "interfaceChanges": [
+        "standard/conformance.py: add --file standalone document validation flag"
+      ],
+      "dataChanges": [],
+      "ui": {
+        "impact": "none",
+        "states": [],
+        "evidence": []
+      },
+      "rollback": "Revert the ticket branch commit or close the pull request before merge."
+    },
+    "runtimeDependencies": [],
+    "validation": [
+      {
+        "criterion": "AC-01",
+        "commands": [
+          "ruff check standard"
+        ],
+        "evidence": "project/ticket-007/README.md"
+      },
+      {
+        "criterion": "AC-02",
+        "commands": [
+          "python3 standard/conformance.py --all"
+        ],
+        "evidence": "project/ticket-007/README.md"
+      },
+      {
+        "criterion": "AC-03",
+        "commands": [
+          "./project/governance-check.sh --base origin/main",
+          "wellman check"
+        ],
+        "evidence": "project/ticket-007/README.md"
+      }
+    ]
+  }
+}
