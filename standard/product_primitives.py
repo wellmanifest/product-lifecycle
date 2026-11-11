@@ -19,6 +19,7 @@ import lifecycle
 ROOT = Path(__file__).resolve().parent
 MAX_INPUT_BYTES = 4 * 1024 * 1024
 MAX_JSON_DEPTH = 64
+MAX_JSON_INT_ABS = 10**400 - 1
 SCHEMA_URI = "https://wellmanifest.dev/schemas/product-lifecycle/v1"
 SCHEMA_PATH = ROOT / "product-lifecycle.schema.json"
 GRAMMAR_PATH = ROOT / "product-lifecycle.v1.gbnf"
@@ -46,10 +47,10 @@ SECRET_MATERIAL = re.compile(
 )
 SAFE_ASSERTIONS = {"secretsRedacted", "commercialDataStored"}
 RFC3339_RE = re.compile(
-    r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-]\d{2}:\d{2})\Z"
+    r"\A\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-]\d{2}:\d{2})\Z"
 )
-ISO_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}\Z")
-SEMVER_RE = re.compile(r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z.-]+)?\Z")
+ISO_DATE_RE = re.compile(r"\A\d{4}-\d{2}-\d{2}\Z")
+SEMVER_RE = re.compile(r"\A(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z.-]+)?\Z")
 STAGES = {
     "draft",
     "preview",
@@ -88,35 +89,79 @@ class ContractError(ValueError):
     """A bounded error that never repeats untrusted commercial or host data."""
 
 
+def _is_valid_utf8(value: str) -> bool:
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError:
+        return False
+    return True
+
+
+def _check_json_scalar(value: Any) -> None:
+    if isinstance(value, str) and not _is_valid_utf8(value):
+        raise ContractError("invalid UTF-8 surrogate in JSON string")
+    if isinstance(value, float) and not math.isfinite(value):
+        raise ContractError("non-finite JSON float is forbidden")
+    if isinstance(value, int) and not isinstance(value, bool) and abs(value) > MAX_JSON_INT_ABS:
+        raise ContractError("JSON integer out of range")
+
+
 def _enforce_json_bounds(root: Any, *, max_depth: int = MAX_JSON_DEPTH) -> None:
     stack: list[tuple[Any, int]] = [(root, 0)]
     while stack:
         current, depth = stack.pop()
         if depth > max_depth:
             raise ContractError("JSON nesting depth exceeded")
-        if isinstance(current, float) and not math.isfinite(current):
-            raise ContractError("non-finite JSON float is forbidden")
         if isinstance(current, dict):
             next_depth = depth + 1
             if next_depth > max_depth and current:
                 raise ContractError("JSON nesting depth exceeded")
             for key, child in current.items():
-                if not isinstance(key, str):
-                    raise ContractError("JSON object key must be a string")
-                if isinstance(child, (dict, list, float)):
+                if not isinstance(key, str) or not _is_valid_utf8(key):
+                    raise ContractError("JSON object key must be valid UTF-8 text")
+                if isinstance(child, (dict, list)):
                     stack.append((child, next_depth))
+                else:
+                    _check_json_scalar(child)
         elif isinstance(current, list):
             next_depth = depth + 1
             if next_depth > max_depth and current:
                 raise ContractError("JSON nesting depth exceeded")
             for child in current:
-                if isinstance(child, (dict, list, float)):
+                if isinstance(child, (dict, list)):
                     stack.append((child, next_depth))
+                else:
+                    _check_json_scalar(child)
+        else:
+            _check_json_scalar(current)
 
 
-def read_regular_utf8(path: str | Path, *, max_bytes: int = MAX_INPUT_BYTES) -> str:
-    raw_path = os.fspath(path)
-    st = os.lstat(raw_path)
+def _has_symlink_ancestor(path: Path) -> bool:
+    ancestors = (
+        [anc for anc in path.parents if anc != Path(".")]
+        if not path.is_absolute()
+        else [anc for anc in path.parents if len(anc.parts) > 2]
+    )
+    for anc in ancestors:
+        try:
+            if anc.is_symlink():
+                return True
+        except OSError:
+            return True
+    return False
+
+
+def read_regular_bytes(path: str | Path, *, max_bytes: int = MAX_INPUT_BYTES) -> bytes:
+    if not isinstance(max_bytes, int) or isinstance(max_bytes, bool) or max_bytes <= 0:
+        raise ContractError("max_bytes must be a positive integer")
+    path_obj = Path(os.fspath(path))
+    if _has_symlink_ancestor(path_obj):
+        raise ContractError("symlink JSON input is forbidden")
+    raw_path = os.fspath(path_obj)
+    try:
+        st = os.lstat(raw_path)
+    except OSError as err:
+        raise ContractError("JSON input cannot be stat'd") from err
     if stat.S_ISLNK(st.st_mode):
         raise ContractError("symlink JSON input is forbidden")
     if not stat.S_ISREG(st.st_mode):
@@ -127,7 +172,7 @@ def read_regular_utf8(path: str | Path, *, max_bytes: int = MAX_INPUT_BYTES) -> 
     except OSError as err:
         if err.errno == errno.ELOOP:
             raise ContractError("symlink JSON input is forbidden") from err
-        raise
+        raise ContractError("JSON input cannot be opened") from err
     try:
         fst = os.fstat(fd)
         if not stat.S_ISREG(fst.st_mode) or (st.st_dev, st.st_ino) != (fst.st_dev, fst.st_ino):
@@ -144,9 +189,13 @@ def read_regular_utf8(path: str | Path, *, max_bytes: int = MAX_INPUT_BYTES) -> 
             total += len(chunk)
             if total > max_bytes:
                 raise ContractError("JSON input exceeds maximum size")
-        raw = b"".join(chunks)
+        return b"".join(chunks)
     finally:
         os.close(fd)
+
+
+def read_regular_utf8(path: str | Path, *, max_bytes: int = MAX_INPUT_BYTES) -> str:
+    raw = read_regular_bytes(path, max_bytes=max_bytes)
     try:
         return raw.decode("utf-8")
     except UnicodeDecodeError as err:
@@ -154,9 +203,9 @@ def read_regular_utf8(path: str | Path, *, max_bytes: int = MAX_INPUT_BYTES) -> 
 
 
 def strict_loads(raw: str) -> Any:
-    if not isinstance(raw, str):
-        raise ContractError("JSON input must be text")
-    if len(raw.encode("utf-8", errors="surrogatepass")) > MAX_INPUT_BYTES:
+    if not isinstance(raw, str) or not _is_valid_utf8(raw):
+        raise ContractError("JSON input must be valid UTF-8 text")
+    if len(raw.encode("utf-8")) > MAX_INPUT_BYTES:
         raise ContractError("JSON input exceeds maximum size")
 
     def _unique_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
@@ -189,22 +238,27 @@ def strict_loads(raw: str) -> Any:
         raise
     except RecursionError as err:
         raise ContractError("JSON nesting depth exceeded") from err
+    except ValueError as err:
+        raise ContractError("malformed JSON input") from err
     _enforce_json_bounds(data)
     return data
 
 
 def canonical(value: Any) -> str:
+    _enforce_json_bounds(value)
     return json.dumps(
         value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False
     )
 
 
 def digest(value: str) -> str:
+    if not isinstance(value, str) or not _is_valid_utf8(value):
+        raise ContractError("digest input must be valid UTF-8 text")
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
 def file_digest(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+    return hashlib.sha256(read_regular_bytes(path)).hexdigest()
 
 
 def exact(value: Any, required: set[str], optional: set[str] | None = None) -> dict[str, Any]:
@@ -284,16 +338,21 @@ def reject_sensitive(value: Any) -> None:
             raise ContractError("JSON nesting depth exceeded")
         if isinstance(current, dict):
             for key, child in current.items():
-                if not isinstance(key, str):
-                    raise ContractError("JSON object key must be a string")
+                if not isinstance(key, str) or not _is_valid_utf8(key):
+                    raise ContractError("JSON object key must be valid UTF-8 text")
                 if SENSITIVE.search(key) and key not in SAFE_ASSERTIONS:
                     raise ContractError("sensitive data channel")
+                if SECRET_MATERIAL.search(key):
+                    raise ContractError("credential material is forbidden")
                 stack.append((child, depth + 1))
         elif isinstance(current, list):
             for child in current:
                 stack.append((child, depth + 1))
-        elif isinstance(current, str) and SECRET_MATERIAL.search(current):
-            raise ContractError("credential material is forbidden")
+        elif isinstance(current, str):
+            if not _is_valid_utf8(current):
+                raise ContractError("invalid UTF-8 surrogate in JSON string")
+            if SECRET_MATERIAL.search(current):
+                raise ContractError("credential material is forbidden")
 
 
 def validate_lifecycle_profile(schema: dict[str, Any]) -> None:
@@ -339,7 +398,14 @@ class Contracts:
             "grantRef",
             "evidenceRef",
         )
-        self.patterns = {name: re.compile(defs[name]["pattern"]) for name in names}
+        self.patterns = {
+            name: re.compile(
+                r"\A" + defs[name]["pattern"][1:-1] + r"\Z"
+                if defs[name]["pattern"].startswith("^") and defs[name]["pattern"].endswith("$")
+                else defs[name]["pattern"]
+            )
+            for name in names
+        }
         self.max_lengths = {
             name: defs[name]["maxLength"] for name in names if "maxLength" in defs[name]
         }
@@ -348,10 +414,17 @@ class Contracts:
         max_len = self.max_lengths.get(name)
         if (
             not isinstance(value, str)
+            or not _is_valid_utf8(value)
             or (max_len is not None and len(value) > max_len)
             or self.patterns[name].fullmatch(value) is None
         ):
             raise ContractError(f"invalid {name}")
+        if "://" in value:
+            host, _, rest = value.split("://", 1)[1].partition("/")
+            if host in {"", ".", ".."} or any(
+                seg in {"", ".", ".."} for seg in re.split(r"[/:]", rest)
+            ):
+                raise ContractError(f"invalid {name}")
         return value
 
     def integrity(self) -> None:

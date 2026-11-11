@@ -1,0 +1,93 @@
+{
+  "schema": "new-project.intent/v3",
+  "ticket": "ticket-010",
+  "summary": "Harden product_primitives JSON overflow/surrogates, ancestor symlinks, secret keys, and ref bounds",
+  "workstream": "integration",
+  "classification": {
+    "kind": "BUG",
+    "priority": "P1",
+    "origin": "health"
+  },
+  "allowedPaths": [
+    "project/ticket-009/README.md",
+    "project/ticket-010/**",
+    "TODO.md",
+    "project/TICKETS.md",
+    "standard/product_primitives.py",
+    "standard/conformance.py",
+    "standard/test_product_hardening.py"
+  ],
+  "forbiddenPaths": [
+    "project/ticket-*/user-*.md"
+  ],
+  "stacks": [],
+  "dependsOn": [],
+  "conflictsWith": [],
+  "integrationTicket": null,
+  "delivery": {
+    "acceptedBaseSha": "6826df027b6894b243a040643e4f792c41152ed1",
+    "targetBranch": "main",
+    "outcome": "Harden product_primitives.py and conformance.py against 10**400 and 4300+ digit JSON integers, lone UTF-16 surrogates, secret-bearing JSON keys, relative and deep absolute symlink ancestors, unanchored regexes, and dot-traversal URI references, expand test_product_hardening.py, and close merged ticket-009.",
+    "nonGoals": [
+      "Do not modify vendored standard/lifecycle*.py or frozen schema/grammar/profile digests",
+      "No runtime dependency additions"
+    ],
+    "complexity": "S",
+    "estimatedMinutes": 20,
+    "budgets": {
+      "maxImplementationFiles": 5,
+      "maxAffectedComponents": 1,
+      "maxPublicInterfaceChanges": 0,
+      "maxRuntimeDependencies": 0
+    },
+    "architecture": {
+      "status": "accepted",
+      "decision": "Centralize UTF-8 surrogate, JSON integer magnitude, symlink-ancestor, regular-file digest, secret-key, and schema reference segment checks in standard/product_primitives.py while keeping all modules below 500 lines.",
+      "components": [
+        {
+          "name": "product-lifecycle-conformance",
+          "paths": [
+            "standard/product_primitives.py",
+            "standard/conformance.py",
+            "standard/test_product_hardening.py"
+          ]
+        }
+      ],
+      "responsibilityChanges": false,
+      "interfaceChanges": [],
+      "dataChanges": [],
+      "ui": {
+        "impact": "none",
+        "states": [],
+        "evidence": []
+      },
+      "rollback": "Revert the ticket branch commit via protected PR delivery."
+    },
+    "runtimeDependencies": [],
+    "validation": [
+      {
+        "criterion": "AC-01",
+        "commands": [
+          "python3 standard/conformance.py --all"
+        ],
+        "evidence": "project/ticket-010/README.md"
+      },
+      {
+        "criterion": "AC-02",
+        "commands": [
+          "ruff check --no-cache standard tests",
+          "PYTHONDONTWRITEBYTECODE=1 python3 -m pytest -q"
+        ],
+        "evidence": "project/ticket-010/README.md"
+      },
+      {
+        "criterion": "AC-03",
+        "commands": [
+          "./project/governance-check.sh --base origin/main",
+          "wellman check"
+        ],
+        "evidence": "project/ticket-010/README.md"
+      }
+    ]
+  }
+}
